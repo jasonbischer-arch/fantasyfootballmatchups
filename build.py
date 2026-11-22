@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Build weekly fantasy football matchup charts.
+"""Build The Sports Mattress: weekly fantasy football matchup charts and tools.
 
-Pulls free NFL data from nflverse (weekly player stats, schedule, depth charts),
-works out what every defense allows to QBs, RBs, WRs and TEs, and writes:
+Pulls free NFL data from nflverse (weekly player stats, schedule and betting lines,
+depth charts, injury reports, snap counts, play-by-play), works out what every
+defense allows to QBs, RBs, WRs and TEs, player usage and team tendencies, and writes:
 
-  site/index.html                      the website (data embedded)
-  site/data.json                       the same data as JSON
+  site/index.html                      the website
+  site/assets/                         stylesheet, script, logo
+  site/data.json                       everything the site shows
   site/Week_<N>_Matchups_<FMT>.xlsx    spreadsheet versions (PPR / Half / Standard)
 
 Usage:
@@ -34,6 +36,20 @@ URL_STATS = NFLVERSE + "/stats_player/stats_player_week_{season}.csv"
 URL_SCHEDULE = NFLVERSE + "/schedules/games.csv"
 URL_DEPTH = NFLVERSE + "/depth_charts/depth_charts_{season}.csv"
 URL_INJURIES = NFLVERSE + "/injuries/injuries_{season}.csv"
+URL_SNAPS = NFLVERSE + "/snap_counts/snap_counts_{season}.csv"
+URL_PLAYERS = NFLVERSE + "/players/players.csv"
+URL_PBP = NFLVERSE + "/pbp/play_by_play_{season}.csv.gz"
+
+TEAM_NAMES = {
+    "ARI": "Arizona Cardinals", "ATL": "Atlanta Falcons", "BAL": "Baltimore Ravens", "BUF": "Buffalo Bills",
+    "CAR": "Carolina Panthers", "CHI": "Chicago Bears", "CIN": "Cincinnati Bengals", "CLE": "Cleveland Browns",
+    "DAL": "Dallas Cowboys", "DEN": "Denver Broncos", "DET": "Detroit Lions", "GB": "Green Bay Packers",
+    "HOU": "Houston Texans", "IND": "Indianapolis Colts", "JAX": "Jacksonville Jaguars", "KC": "Kansas City Chiefs",
+    "LA": "Los Angeles Rams", "LAC": "Los Angeles Chargers", "LV": "Las Vegas Raiders", "MIA": "Miami Dolphins",
+    "MIN": "Minnesota Vikings", "NE": "New England Patriots", "NO": "New Orleans Saints", "NYG": "New York Giants",
+    "NYJ": "New York Jets", "PHI": "Philadelphia Eagles", "PIT": "Pittsburgh Steelers", "SEA": "Seattle Seahawks",
+    "SF": "San Francisco 49ers", "TB": "Tampa Bay Buccaneers", "TEN": "Tennessee Titans", "WAS": "Washington Commanders",
+}
 
 POSITIONS = ["QB", "RB", "WR", "TE"]
 FORMATS = {"ppr": 1.0, "half": 0.5, "std": 0.0}
@@ -146,6 +162,71 @@ def load_depth(season: int) -> dict[str, dict[str, list[dict]]]:
     return depth
 
 
+def load_snaps(season: int) -> dict[tuple[str, int], tuple[float, int]]:
+    """Offensive snap share per (gsis_id, week). Empty if unavailable."""
+    try:
+        snaps_path = fetch(URL_SNAPS.format(season=season), f"snaps_{season}.csv")
+        players_path = fetch(URL_PLAYERS, "players.csv", max_age_hours=72)
+    except Exception as e:
+        print(f"  snap counts unavailable: {e}", file=sys.stderr)
+        return {}
+    pfr_to_gsis = {}
+    with open(players_path, newline="") as f:
+        for r in csv.DictReader(f):
+            if r["pfr_id"] and r["gsis_id"]:
+                pfr_to_gsis[r["pfr_id"]] = r["gsis_id"]
+    out = {}
+    with open(snaps_path, newline="") as f:
+        for r in csv.DictReader(f):
+            if r["game_type"] != "REG" or num(r["offense_snaps"]) <= 0:
+                continue
+            gid = pfr_to_gsis.get(r["pfr_player_id"])
+            if gid:
+                out[(gid, int(r["week"]))] = (num(r["offense_pct"]), int(num(r["offense_snaps"])))
+    return out
+
+
+def load_pbp(season: int, game_ids: set[str]):
+    """Red-zone usage per player-week and play-calling tendencies per team-week."""
+    import gzip
+    player = defaultdict(lambda: defaultdict(float))   # (gsis, week) -> rz_tgt / rz_car / gl_car
+    team = defaultdict(lambda: defaultdict(float))     # (team, week) -> plays, dropbacks, neutral..., proe
+    try:
+        path = fetch(URL_PBP.format(season=season), f"pbp_{season}.csv.gz")
+    except Exception as e:
+        print(f"  play-by-play unavailable: {e}", file=sys.stderr)
+        return player, team
+    with gzip.open(path, "rt", newline="") as f:
+        for r in csv.DictReader(f):
+            if r["game_id"] not in game_ids or r["play_type"] not in ("pass", "run") or r["two_point_attempt"] == "1":
+                continue
+            wk, pos_team = int(r["week"]), r["posteam"]
+            yl = num(r["yardline_100"]) or 99
+            dropback = r["qb_dropback"] == "1"
+            t = team[(pos_team, wk)]
+            t["plays"] += 1
+            t["dropbacks"] += dropback
+            if yl <= 20:
+                t["rz_plays"] += 1
+            wp = num(r["wp"]) if r["wp"] not in ("", "NA") else 0.5
+            if r["down"] in ("1", "2") and 0.2 <= wp <= 0.8 and r["qtr"] in ("1", "2", "3"):
+                t["neutral"] += 1
+                t["neutral_pass"] += dropback
+            if r["pass_oe"] not in ("", "NA"):
+                t["proe_sum"] += num(r["pass_oe"])
+                t["proe_n"] += 1
+            if yl <= 20:
+                if r["pass_attempt"] == "1" and r["receiver_player_id"] not in ("", "NA"):
+                    player[(r["receiver_player_id"], wk)]["rz_tgt"] += 1
+                if r["rush_attempt"] == "1" and r["rusher_player_id"] not in ("", "NA"):
+                    player[(r["rusher_player_id"], wk)]["rz_car"] += 1
+                    if yl <= 5:
+                        player[(r["rusher_player_id"], wk)]["gl_car"] += 1
+            if num(r["air_yards"]) >= 20 and r["pass_attempt"] == "1" and r["receiver_player_id"] not in ("", "NA"):
+                player[(r["receiver_player_id"], wk)]["deep_tgt"] += 1
+    return player, team
+
+
 def load_injuries(season: int, week: int) -> dict[str, dict]:
     """This week's official injury report: {gsis_id: {"status", "injury"}}. Empty if unavailable."""
     try:
@@ -196,9 +277,14 @@ def build(season: int, week: int | None) -> dict:
     player_recent = defaultdict(lambda: [0.0, 0])            # gsis -> [ppr pts, games]
     plog = defaultdict(list)                                 # gsis -> list of game entries
 
+    team_game = defaultdict(lambda: defaultdict(float))     # (team, week) -> tgt / air / car
     for r in stats:
         if r["game_id"] not in completed:
             continue
+        tg = team_game[(r["team"], int(r["week"]))]
+        tg["tgt"] += num(r["targets"])
+        tg["air"] += max(0.0, num(r["receiving_air_yards"]))
+        tg["car"] += num(r["carries"])
         pos = norm_pos(r["position"])
         defense, week_no = r["opponent_team"], int(r["week"])
         # Pass yards/TDs/INTs allowed count every passer, whatever his position.
@@ -209,9 +295,11 @@ def build(season: int, week: int | None) -> dict:
         if not pos:
             continue
         plog[r["player_id"]].append({
-            "week": week_no, "team": r["team"], "name": r["player_display_name"], "pos": pos,
+            "week": week_no, "team": r["team"], "opp": defense, "name": r["player_display_name"], "pos": pos,
+            "headshot": r["headshot_url"] if r["headshot_url"] not in ("", "NA") else "",
             "pts": {f: fantasy_points(r, rp) for f, rp in FORMATS.items()},
             "use": {k: num(r[src]) for k, src in USAGE_SRC.items()},
+            "air": num(r["receiving_air_yards"]),
         })
         t = tot[(defense, pos)]
         for fmt, rp in FORMATS.items():
@@ -277,29 +365,32 @@ def build(season: int, week: int | None) -> dict:
             opponent[g["home_team"]] = (g["away_team"], False, kick)
             opponent[g["away_team"]] = (g["home_team"], True, kick)
 
-    def players_for(team: str, pos: str) -> list[str]:
+    def players_for(team: str, pos: str) -> list[dict]:
         lst = depth.get(team, {}).get(pos, [])[: DEPTH_SHOWN[pos]]
         if not lst:
-            return [f"{team} {pos}"]
+            return []
         if pos == "QB":
-            return [short_name(lst[0]["player_name"])]
-        if pos == "WR":
-            return [short_name(p["player_name"]) for p in lst]
-        # RB / TE: starter, plus the backup only if he is splitting work.
-        names = [short_name(lst[0]["player_name"])]
-        if len(lst) > 1:
-            a, b = player_recent.get(lst[0]["gsis_id"]), player_recent.get(lst[1]["gsis_id"])
-            a_ppg = a[0] / a[1] if a and a[1] else 0
-            b_ppg = b[0] / b[1] if b and b[1] else 0
-            if b_ppg and (a_ppg == 0 or b_ppg >= COMMITTEE_SHARE * a_ppg):
-                names.append(short_name(lst[1]["player_name"]))
-        return names
+            chosen = lst[:1]
+        elif pos == "WR":
+            chosen = lst
+        else:
+            # RB / TE: starter, plus the backup only if he is splitting work.
+            chosen = lst[:1]
+            if len(lst) > 1:
+                a, b = player_recent.get(lst[0]["gsis_id"]), player_recent.get(lst[1]["gsis_id"])
+                a_ppg = a[0] / a[1] if a and a[1] else 0
+                b_ppg = b[0] / b[1] if b and b[1] else 0
+                if b_ppg and (a_ppg == 0 or b_ppg >= COMMITTEE_SHARE * a_ppg):
+                    chosen = lst[:2]
+        return chosen
 
     positions_out = {}
     for pos in POSITIONS:
         rows = []
         for team in teams:
-            row = {"team": team, "players": players_for(team, pos)}
+            chosen = players_for(team, pos)
+            row = {"team": team, "players": [short_name(p["player_name"]) for p in chosen] or [f"{team} {pos}"],
+                   "ids": [p["gsis_id"] for p in chosen]}
             if team in opponent:
                 opp, away, kick = opponent[team]
                 row.update({"opp": opp, "away": away, "kick": kick, "def": defense_info[pos][opp]})
@@ -311,7 +402,10 @@ def build(season: int, week: int | None) -> dict:
             "rows": rows,
         }
 
-    players_out = build_players(plog, depth, injuries, opponent, target)
+    snaps = load_snaps(season)
+    pbp_player, pbp_team = load_pbp(season, set(completed))
+    players_out = build_players(plog, depth, injuries, opponent, target, snaps, pbp_player, team_game)
+    teams_out = build_teams(schedule, completed, target, pbp_team, teams)
     league_avg = {pos: {f: round(sum(defense_info[pos][d]["fppg"][f] for d in teams) / len(teams), 2)
                         for f in FORMATS} for pos in POSITIONS}
 
@@ -327,7 +421,56 @@ def build(season: int, week: int | None) -> dict:
                      for pos, by in defense_info.items()},
         "leagueAvg": league_avg,
         "players": players_out,
+        "logKeys": LOG_KEYS,
+        "teams": teams_out,
     }
+
+
+def build_teams(schedule, completed, target, pbp_team, teams) -> dict:
+    """Team context: this week's betting lines, scoring, pace, pass tendencies, remaining schedule."""
+    out = {t: {"name": TEAM_NAMES.get(t, t), "sched": [], "pf": 0.0, "pa": 0.0, "g": 0} for t in teams}
+    for g in completed.values():
+        h, a = g["home_team"], g["away_team"]
+        hs, as_ = num(g["home_score"]), num(g["away_score"])
+        for t, f, ag in ((h, hs, as_), (a, as_, hs)):
+            out[t]["pf"] += f
+            out[t]["pa"] += ag
+            out[t]["g"] += 1
+    for g in schedule:
+        wk = int(g["week"])
+        h, a = g["home_team"], g["away_team"]
+        if wk >= target:
+            out[h]["sched"].append([wk, a, 0])
+            out[a]["sched"].append([wk, h, 1])
+        if wk == target:
+            kick = f'{g["gameday"]} {g["gametime"]}'.strip()
+            spread, total = g["spread_line"], g["total_line"]
+            game = {"kick": kick, "roof": g["roof"] if g["roof"] not in ("", "NA") else ""}
+            if spread not in ("", "NA") and total not in ("", "NA"):
+                sp, tot = num(spread), num(total)   # spread_line > 0 means the home team is favored
+                game.update({"total": tot})
+                out[h].update(game, opp=a, away=False, spread=-sp, implied=round((tot + sp) / 2, 1))
+                out[a].update(game, opp=h, away=True, spread=sp, implied=round((tot - sp) / 2, 1))
+            else:
+                out[h].update(game, opp=a, away=False)
+                out[a].update(game, opp=h, away=True)
+    agg = defaultdict(lambda: defaultdict(float))
+    for (t, wk), v in pbp_team.items():
+        for k, x in v.items():
+            agg[t][k] += x
+    for t, o in out.items():
+        g = o["g"] or 1
+        a = agg.get(t, {})
+        o["ppg"] = round(o.pop("pf") / g, 1)
+        o["papg"] = round(o.pop("pa") / g, 1)
+        if a:
+            o["plays"] = round(a["plays"] / g, 1)
+            o["passRate"] = round(a["dropbacks"] / a["plays"], 3) if a["plays"] else None
+            o["neutralPass"] = round(a["neutral_pass"] / a["neutral"], 3) if a["neutral"] else None
+            o["proe"] = round(a["proe_sum"] / a["proe_n"], 1) if a["proe_n"] else None
+            o["rzPlays"] = round(a["rz_plays"] / g, 1)
+        o["sched"].sort()
+    return out
 
 
 USAGE_KEYS = {
@@ -343,8 +486,17 @@ USAGE_SRC = {
 }
 
 
-def build_players(plog, depth, injuries, opponent, target) -> list[dict]:
-    """Per-player season and recent production, for the start/sit comparer."""
+# One row per game in each player's log, in this order.
+LOG_KEYS = ["wk", "opp", "snap", "pts", "ptsStd", "tgt", "rec", "recyd", "car", "ryd",
+            "att", "pyd", "ptd", "int", "td", "rz", "tgtShare"]
+
+
+def share(part: float, whole: float) -> float | None:
+    return round(part / whole, 3) if whole else None
+
+
+def build_players(plog, depth, injuries, opponent, target, snaps, pbp_player, team_game) -> list[dict]:
+    """Per-player production, usage shares and game logs."""
     depth_team = {}
     for team, by_pos in depth.items():
         for pos, lst in by_pos.items():
@@ -364,8 +516,41 @@ def build_players(plog, depth, injuries, opponent, target) -> list[dict]:
         ppg = {f: round(sum(g["pts"][f] for g in games) / n, 2) for f in ("ppr", "std")}
         # Keep anyone on a current depth chart or who has been playing lately and producing.
         active = depth_rank is not None or latest["week"] >= target - 3
-        if not active or ppg["ppr"] < 3:
+        if not active or ppg["ppr"] < 2:
             continue
+
+        def usage(gs):
+            """Shares over a set of games: player total / team total in the games he played."""
+            tt = {k: sum(team_game[(g["team"], g["week"])][k] for g in gs) for k in ("tgt", "air", "car")}
+            pt = sum(g["use"]["tgt"] for g in gs)
+            pa = sum(max(0.0, g["air"]) for g in gs)
+            pc = sum(g["use"]["car"] for g in gs)
+            sn = [snaps[(pid, g["week"])][0] for g in gs if (pid, g["week"]) in snaps]
+            rz = [pbp_player.get((pid, g["week"]), {}) for g in gs]
+            ts, ash = share(pt, tt["tgt"]), share(pa, tt["air"])
+            return {
+                "snap": round(sum(sn) / len(sn), 3) if sn else None,
+                "tgtShare": ts, "airShare": ash,
+                "wopr": round(1.5 * ts + 0.7 * ash, 3) if ts is not None and ash is not None else None,
+                "rushShare": share(pc, tt["car"]),
+                "rzTgt": round(sum(x.get("rz_tgt", 0) for x in rz) / len(gs), 2),
+                "rzCar": round(sum(x.get("rz_car", 0) for x in rz) / len(gs), 2),
+                "glCar": round(sum(x.get("gl_car", 0) for x in rz) / len(gs), 2),
+                "deepTgt": round(sum(x.get("deep_tgt", 0) for x in rz) / len(gs), 2),
+            }
+
+        log = []
+        for g in games:
+            u, tg = g["use"], team_game[(g["team"], g["week"])]
+            sn = snaps.get((pid, g["week"]))
+            rz = pbp_player.get((pid, g["week"]), {})
+            log.append([
+                g["week"], g["opp"], round(sn[0], 2) if sn else None,
+                round(g["pts"]["ppr"], 1), round(g["pts"]["std"], 1),
+                int(u["tgt"]), int(u["rec"]), int(u["recyd"]), int(u["car"]), int(u["ryd"]),
+                int(u["att"]), int(u["pyd"]), int(u["ptd"]), int(u["int"]), int(u["rtd"] + u["rectd"]),
+                int(rz.get("rz_tgt", 0) + rz.get("rz_car", 0)), share(u["tgt"], tg["tgt"]),
+            ])
         row = {
             "id": pid, "name": latest["name"], "pos": pos, "team": team, "depth": depth_rank, "g": n,
             "ppg": ppg,
@@ -373,7 +558,12 @@ def build_players(plog, depth, injuries, opponent, target) -> list[dict]:
             "use": {k: round(sum(g["use"][k] for g in games) / n, 1) for k in USAGE_KEYS[pos]},
             "l3use": {k: round(sum(g["use"][k] for g in recent) / len(recent), 1) for k in USAGE_KEYS[pos]},
             "lastWeek": latest["week"],
+            "season": usage(games),
+            "recent": usage(recent),
+            "log": log,
         }
+        if latest["headshot"]:
+            row["img"] = latest["headshot"]
         if team in opponent:
             opp, away, kick = opponent[team]
             row.update({"opp": opp, "away": away, "kick": kick})
@@ -388,23 +578,28 @@ def build_players(plog, depth, injuries, opponent, target) -> list[dict]:
 
 # --------------------------------------------------------------------------- output
 
-def render_html(data: dict, downloads: bool) -> str:
+def render_html(downloads: bool, build_id: str) -> str:
     html = (ROOT / "template" / "index.html").read_text()
-    payload = json.dumps(data, separators=(",", ":")).replace("</", "<\\/")
-    html = html.replace("/*__DATA__*/null", payload)
+    html = html.replace("__BUILD__", build_id)
     return html.replace("/*__DOWNLOADS__*/true", "true" if downloads else "false")
 
 
 def write_site(data: dict, preview: Path | None) -> None:
     OUT.mkdir(exist_ok=True)
-    (OUT / "data.json").write_text(json.dumps(data, separators=(",", ":")))
-    (OUT / "index.html").write_text('<!doctype html>\n<html lang="en">\n' + render_html(data, True) + "\n</html>\n")
+    build_id = data["updated"].replace(":", "").replace("-", "")
+    payload = json.dumps(data, separators=(",", ":"))
+    (OUT / "data.json").write_text(payload)
+    shutil.copytree(ROOT / "template" / "assets", OUT / "assets", dirs_exist_ok=True)
+    (OUT / "index.html").write_text('<!doctype html>\n<html lang="en">\n' + render_html(True, build_id) + "\n</html>\n")
     write_xlsx(data)
     print(f"Wrote {OUT / 'index.html'}", file=sys.stderr)
     if preview:
-        # Body-only page without download links, for hosts that wrap pages themselves.
-        preview.write_text(render_html(data, False))
-        print(f"Wrote {preview}", file=sys.stderr)
+        # Body-only copy without download links, for hosts that wrap pages themselves.
+        preview.mkdir(parents=True, exist_ok=True)
+        (preview / "index.html").write_text(render_html(False, build_id))
+        (preview / "data.json").write_text(payload)
+        shutil.copytree(ROOT / "template" / "assets", preview / "assets", dirs_exist_ok=True)
+        print(f"Wrote preview to {preview}", file=sys.stderr)
 
 
 def sorted_rows(rows: list[dict], fmt: str) -> list[dict]:
@@ -484,7 +679,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--season", type=int, default=default_season())
     ap.add_argument("--week", type=int)
-    ap.add_argument("--preview", type=Path, help="also write a body-only preview page to this path")
+    ap.add_argument("--preview", type=Path, help="also write a body-only preview site into this folder")
     args = ap.parse_args()
     data = build(args.season, args.week)
     write_site(data, args.preview)

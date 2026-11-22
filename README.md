@@ -1,37 +1,36 @@
-# Weekly Fantasy Matchup Charts
+# The Sports Mattress
 
-A website that rebuilds QB, RB, WR and TE matchup charts automatically each week.
-It shows each team's starters, their opponent, how that defense ranks in fantasy
-points allowed to the position, what the defense gave up last week (and to whom),
-and per-game stats the defense allows. Cells are color-coded red (tough) to green (great).
+Fantasy football matchup charts and tools that rebuild themselves every week.
+Live at **https://jasonbischer-arch.github.io/fantasyfootballmatchups/**
 
-Data comes free from [nflverse](https://github.com/nflverse/nflverse-data): weekly player
-stats, the schedule, daily depth charts, and injury reports. No API keys.
+The logo is a quilted mattress whose panels run from red (tough matchup) to green (great matchup),
+the same scale used across the site.
 
-## What's on each chart
+## Pages
 
-| Position | Columns (allowed per game by the opponent to that position) |
+| Page | What it does |
 |---|---|
-| QB | Rank, FPPG, PA last week, Pass Y/G, Pass TD/G, INT/G |
-| RB | Rank, FPPG, PA last week, Rush Y/G, Rush TD/G, Rec/G, Rec Y/G, Rec TD/G |
-| WR | Rank, FPPG, PA last week, Tgt/G, Rec/G, Rec Y/G, Rec TD/G |
-| TE | Rank, FPPG, PA last week, Tgt/G, Rec/G, Rec Y/G, Rec TD/G |
+| **Home** | Best matchups at each position, the game slate with projected team points from betting lines, usage risers, injury watch. |
+| **Matchups** | The color-coded QB / RB / WR / TE matchup charts: opponent, rank (by fantasy points allowed), team projected points, last week's points allowed and to whom, plus per-game stats the defense allows. Downloadable as `.xlsx`. |
+| **Start / Sit** | Compare any two players (any positions). Verdict with reasons, matchup-adjusted projection, matchup rank, usage, injuries. |
+| **My Team** | Enter your roster (saved in your browser) and get the best lineup for the week. Supports 3 WR, 2 flex and superflex. |
+| **Players** | Snap %, target share, air yards share, WOPR, rush share, red-zone opportunities, per-game volume, and next opponent for every fantasy-relevant player. Click anyone for a game log and chart. |
+| **Schedule** | Rest-of-season strength of schedule by position: each week's opponent colored by how much it allows, with next-4, rest-of-season and Weeks 15–17 (fantasy playoffs) averages. |
+| **Teams** | Projected points, spread, total, points scored/allowed, plays per game, pass rate, neutral-situation pass rate, pass rate over expected, red-zone plays. |
 
-Rank 1 = fewest fantasy points allowed, 32 = most. Switch between PPR, Half PPR and Standard
-on the page. Teams on bye are listed at the bottom. Each build also writes `.xlsx` spreadsheets
-in the same style as the original hand-made charts.
+Scoring format (PPR / Half PPR / Standard) switches everywhere from the header.
 
-## Start / Sit
+## Data
 
-The **Start / Sit** tab compares any two players, at any position, so it works for flex spots. It gives a verdict
-with plain-language reasons and a side-by-side breakdown:
+All free from [nflverse](https://github.com/nflverse/nflverse-data), no API keys: weekly player stats,
+schedules and betting lines, depth charts, injury reports, snap counts, and play-by-play (for red-zone
+usage and team tendencies).
 
-- **Projection:** the player's own points per game (60% season average, 40% last 3 games), adjusted for how
-  many points his opponent allows to his position compared with the league average. The matchup effect
-  is halved and capped at ±25% because defensive samples are small. Under 1 point apart is called a toss-up.
-- **Matchup:** opponent, matchup rank, points allowed per game, and the size of the adjustment.
-- **Production and usage:** points per game, last 3 games, and per-game usage (targets, carries, yards, TDs).
-- **Injuries:** status from the official weekly injury report. Players who are out or on bye can't be started.
+## How it updates
+
+`.github/workflows/update.yml` rebuilds and publishes the site to GitHub Pages every
+**Wednesday at 10am** and **Sunday at 5am** (US Eastern), and on every push to `main`.
+To rebuild by hand: **Actions → Update matchup charts → Run workflow** (you can force a week).
 
 ## Run it locally
 
@@ -39,23 +38,29 @@ with plain-language reasons and a side-by-side breakdown:
 pip install -r requirements.txt
 python build.py            # upcoming week
 python build.py --week 12  # or a specific week
+cd site && python -m http.server 8000
 ```
 
-Then open `site/index.html`.
+Then open http://localhost:8000. The page loads `data.json`, so open it through a local server
+rather than double-clicking the file.
 
-## Publish it (free, updates itself)
+## Files
 
-1. Create a GitHub repository and push this folder to `main`.
-2. In the repo, go to **Settings → Pages** and set **Source** to **GitHub Actions**.
-3. The workflow in `.github/workflows/update.yml` runs every **Wednesday at 10am** and **Sunday at 5am** (US Eastern) and on every push,
-   and publishes to `https://<your-user>.github.io/<repo>/`.
-4. To rebuild by hand, open **Actions → Update matchup charts → Run workflow**.
+- `build.py` downloads the data and writes `site/` (`index.html`, `data.json`, `assets/`, `.xlsx` files).
+- `template/index.html` is the page shell; `template/assets/app.js` renders every page; `app.css` is the design;
+  `logo.svg` and `mark.svg` are the logo and icon.
 
 ## Tweaking
 
-Settings at the top of `build.py`:
+In `build.py`:
 
-- `DEPTH_SHOWN`: how many players to list per team (QB 1, RB 2, WR 3, TE 2).
+- `DEPTH_SHOWN`: players listed per team on the matchup charts (QB 1, RB 2, WR 3, TE 2).
 - `COMMITTEE_SHARE`: a backup RB/TE is listed when he scores at least this share of the starter's points over the last 3 games.
-- `COLUMNS`: which defensive stats appear per position.
+- `COLUMNS`: defensive stats shown per position.
 - `fantasy_points()`: the scoring rules (4 pt passing TD by default).
+
+In `template/assets/app.js`:
+
+- `project()`: the start/sit projection (60% season, 40% last 3 games, matchup effect halved and capped at ±25%).
+- `SLOT_SETS`: lineup formats on My Team.
+- `PLAYOFF_WEEKS`: weeks highlighted on the schedule.

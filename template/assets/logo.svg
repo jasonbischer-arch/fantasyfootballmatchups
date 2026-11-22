@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 96" role="img" aria-label="The Sports Mattress">
+  <defs>
+    <clipPath id="top"><rect x="6" y="18" width="108" height="44" rx="12"/></clipPath>
+  </defs>
+  <rect x="6" y="48" width="108" height="30" rx="10" fill="#142033"/>
+  <path d="M16 70 H104" stroke="#ffffff" stroke-opacity=".55" stroke-width="2" stroke-dasharray="4 4" stroke-linecap="round"/>
+  <g clip-path="url(#top)">
+    <rect x="6"  y="18" width="18" height="44" fill="#e67c73"/>
+    <rect x="24" y="18" width="18" height="44" fill="#ef9a6f"/>
+    <rect x="42" y="18" width="18" height="44" fill="#f6b26b"/>
+    <rect x="60" y="18" width="18" height="44" fill="#f8cf66"/>
+    <rect x="78" y="18" width="18" height="44" fill="#a9ca7a"/>
+    <rect x="96" y="18" width="18" height="44" fill="#57bb8a"/>
+    <path d="M24 18 V62 M42 18 V62 M60 18 V62 M78 18 V62 M96 18 V62 M6 40 H114" stroke="#142033" stroke-opacity=".18" stroke-width="1.5"/>
+  </g>
+  <rect x="6" y="18" width="108" height="44" rx="12" fill="none" stroke="#142033" stroke-width="3"/>
+  <g fill="#142033" fill-opacity=".45">
+    <circle cx="24" cy="40" r="2.2"/><circle cx="42" cy="40" r="2.2"/><circle cx="60" cy="40" r="2.2"/>
+    <circle cx="78" cy="40" r="2.2"/><circle cx="96" cy="40" r="2.2"/>
+  </g>
+  <text x="136" y="38" font-family="'Barlow Condensed','Arial Narrow',Arial,sans-serif" font-weight="700" font-size="22" letter-spacing="6" fill="#142033">THE SPORTS</text>
+  <text x="134" y="80" font-family="'Barlow Condensed','Arial Narrow',Arial,sans-serif" font-weight="800" font-size="50" letter-spacing="1" fill="#142033">MATTRESS</text>
+</svg>
