@@ -275,7 +275,15 @@ function renderHome() {
   const f = state.fmt;
   const playing = Object.entries(D.teams).filter(([, t]) => t.opp);
   const byes = Object.entries(D.teams).filter(([, t]) => !t.opp).map(([k]) => k);
-  const topTot = playing.filter(([, t]) => t.implied != null).sort((a, b) => b[1].implied - a[1].implied)[0];
+  // Hero tiles: this week's headline spots.
+  const shootout = playing.filter(([, t]) => t.total != null && !t.away).sort((a, b) => b[1].total - a[1].total)[0];
+  const starters = D.players.filter(p => !unavailable(p) && p.g >= 3);
+  const smash = starters.filter(p => p.ppg.ppr >= 10)
+    .sort((a, b) => defFor(b).rank[f] - defFor(a).rank[f] || project(b).proj - project(a).proj)[0];
+  const fade = starters.filter(p => p.ppg.ppr >= 12)
+    .sort((a, b) => defFor(a).rank[f] - defFor(b).rank[f] || b.ppg.ppr - a.ppg.ppr)[0];
+  const byeStars = D.players.filter(p => p.bye).sort((a, b) => b.ppg.ppr - a.ppg.ppr).slice(0, 3);
+  const tileName = p => `<span class="v tile-name">${plink(p)}</span>`;
   const quilt = Array.from({ length: 18 }, (_, i) => `<i style="background:${scaleColor(i % 6, 0, 2.5, 5)};animation-delay:${(i * 0.37) % 3}s"></i>`).join("");
 
   // Snap share risers (all skill positions).
@@ -347,10 +355,17 @@ function renderHome() {
       </div>
       <div class="hero-side">
         <div class="stat-tiles">
-          <div class="panel tile"><span class="k">Games</span><span class="v">${games.length}</span><span class="s">${byes.length ? `${byes.length} teams on bye` : "No byes"}</span></div>
-          <div class="panel tile"><span class="k">Top team total</span><span class="v">${topTot ? f1(topTot[1].implied) : "—"}</span><span class="s">${topTot ? esc(topTot[1].name) : "Lines not posted yet"}</span></div>
-          <div class="panel tile"><span class="k">Players tracked</span><span class="v">${D.players.length}</span><span class="s">QB, RB, WR, TE</span></div>
-          <div class="panel tile"><span class="k">On bye</span><span class="v" style="font-size:18px;line-height:1.2">${byes.length ? esc(byes.join(", ")) : "None"}</span><span class="s">Week ${D.week}</span></div>
+          <div class="panel tile"><span class="k">Shootout of the week</span>${shootout ? `
+            <span class="v tile-game">${teamLogo(shootout[1].opp, "sm")}${esc(shootout[1].opp)} <span class="at">@</span> ${teamLogo(shootout[0], "sm")}${esc(shootout[0])}</span>
+            <span class="s">O/U ${shootout[1].total} · ${esc(shootout[1].opp)} ${f1(D.teams[shootout[1].opp].implied)}, ${esc(shootout[0])} ${f1(shootout[1].implied)} projected</span>` :
+            `<span class="v">—</span><span class="s">Betting lines aren't posted yet</span>`}</div>
+          <div class="panel tile tile-good"><span class="k">Smash spot</span>${smash ? `${tileName(smash)}
+            <span class="s">${smash.pos} · ${esc(oppText(smash))} · rank ${defFor(smash).rank[f]} of 32 vs ${smash.pos}s · ${f1(project(smash).proj)} proj</span>` : `<span class="v">—</span>`}</div>
+          <div class="panel tile tile-bad"><span class="k">Fade alert</span>${fade ? `${tileName(fade)}
+            <span class="s">${fade.pos} · ${esc(oppText(fade))} · rank ${defFor(fade).rank[f]} of 32 vs ${fade.pos}s · ${f1(pts(fade.ppg, f))} pts/g average</span>` : `<span class="v">—</span>`}</div>
+          <div class="panel tile"><span class="k">Stars on bye</span>${byeStars.length ? `
+            <span class="tile-list">${byeStars.map(p => `<span>${plink(p)} <small>${p.pos} · ${esc(p.team)} · ${f1(pts(p.ppg, f))}</small></span>`).join("")}</span>
+            <span class="s">${byes.length} teams off: ${esc(byes.join(", "))}</span>` : `<span class="v">None</span><span class="s">All 32 teams play in Week ${D.week}</span>`}</div>
         </div>
       </div>
     </section>

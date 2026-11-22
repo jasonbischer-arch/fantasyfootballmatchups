@@ -199,6 +199,15 @@ td.bar-cell span { position: relative; }
 .tile .k { font: 700 12px/1 var(--display); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
 .tile .v { font: 800 28px/1 var(--display); }
 .tile .s { font-size: 13px; color: var(--muted); }
+.tile { align-content: start; }
+.tile-name { font-size: 24px; line-height: 1.05; }
+.tile-name .plink { font: inherit; }
+.tile-game { display: flex; align-items: center; gap: 6px; font-size: 24px; flex-wrap: wrap; }
+.tile-game .at { color: var(--muted); font-size: 16px; }
+.tile-good { box-shadow: inset 4px 0 0 var(--s-green), var(--shadow); }
+.tile-bad { box-shadow: inset 4px 0 0 var(--s-red), var(--shadow); }
+.tile-list { display: grid; gap: 3px; font-size: 14px; }
+.tile-list small { color: var(--muted); font-weight: 600; font-size: 12px; }
 .grid-4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
 .grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
 .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
@@ -344,4 +353,6 @@ dialog.drawer::backdrop { background: rgb(10 16 28 / .45); }
   .usage-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .slot { grid-template-columns: 48px minmax(0, 1fr) auto auto; gap: 8px; padding: 10px; }
   .hero-main { padding: 18px; }
+  .tile-game { font-size: 19px; gap: 4px; flex-wrap: nowrap; }
+  .tile-name { font-size: 21px; }
 }
