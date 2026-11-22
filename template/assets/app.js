@@ -283,7 +283,8 @@ function renderHome() {
   // Fade: a mid-range starter (8–12 PPR pts/g, so the pick stays the same in every format) with the toughest matchup.
   const fade = starters.filter(p => p.ppg.ppr >= 8 && p.ppg.ppr <= 12)
     .sort((a, b) => defFor(a).rank[f] - defFor(b).rank[f] || b.ppg.ppr - a.ppg.ppr)[0];
-  const byeStars = D.players.filter(p => p.bye).sort((a, b) => b.ppg.ppr - a.ppg.ppr).slice(0, 3);
+  // Teams on bye file no injury report, so skip anyone who sat out his team's most recent game.
+  const byeStars = D.players.filter(p => p.bye && !p.inj && !p.missed).sort((a, b) => b.ppg.ppr - a.ppg.ppr).slice(0, 3);
   const tileName = p => `<span class="v tile-name">${plink(p)}</span>`;
   const quilt = Array.from({ length: 18 }, (_, i) => `<i style="background:${scaleColor(i % 6, 0, 2.5, 5)};animation-delay:${(i * 0.37) % 3}s"></i>`).join("");
 

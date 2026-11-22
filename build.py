@@ -404,7 +404,11 @@ def build(season: int, week: int | None) -> dict:
 
     snaps = load_snaps(season)
     pbp_player, pbp_team = load_pbp(season, set(completed))
-    players_out = build_players(plog, depth, injuries, opponent, target, snaps, pbp_player, team_game)
+    team_weeks = defaultdict(set)
+    for g in completed.values():
+        team_weeks[g["home_team"]].add(int(g["week"]))
+        team_weeks[g["away_team"]].add(int(g["week"]))
+    players_out = build_players(plog, depth, injuries, opponent, target, snaps, pbp_player, team_game, team_weeks)
     teams_out = build_teams(schedule, completed, target, pbp_team, teams)
     league_avg = {pos: {f: round(sum(defense_info[pos][d]["fppg"][f] for d in teams) / len(teams), 2)
                         for f in FORMATS} for pos in POSITIONS}
@@ -495,7 +499,7 @@ def share(part: float, whole: float) -> float | None:
     return round(part / whole, 3) if whole else None
 
 
-def build_players(plog, depth, injuries, opponent, target, snaps, pbp_player, team_game) -> list[dict]:
+def build_players(plog, depth, injuries, opponent, target, snaps, pbp_player, team_game, team_weeks) -> list[dict]:
     """Per-player production, usage shares and game logs."""
     depth_team = {}
     for team, by_pos in depth.items():
@@ -558,6 +562,8 @@ def build_players(plog, depth, injuries, opponent, target, snaps, pbp_player, te
             "use": {k: round(sum(g["use"][k] for g in games) / n, 1) for k in USAGE_KEYS[pos]},
             "l3use": {k: round(sum(g["use"][k] for g in recent) / len(recent), 1) for k in USAGE_KEYS[pos]},
             "lastWeek": latest["week"],
+            # Team games played since his last appearance (e.g. 1 = sat out the most recent game).
+            "missed": sum(1 for w in team_weeks.get(team, ()) if w > latest["week"]),
             "season": usage(games),
             "recent": usage(recent),
             "log": log,
