@@ -254,9 +254,9 @@ const ACTIONS = {
 // ------------------------------------------------------------------ HOME
 // ESPN team logo codes (nflverse uses the same images).
 const ESPN = { LA: "lar", WAS: "wsh" };
-function teamLogo(abbr) {
+function teamLogo(abbr, size) {
   const code = (ESPN[abbr] || abbr).toLowerCase();
-  return `<span class="tlogo" aria-hidden="true">${esc(abbr)}<img src="https://a.espncdn.com/i/teamlogos/nfl/500/${code}.png" alt="" loading="lazy" referrerpolicy="no-referrer"></span>`;
+  return `<span class="tlogo${size ? " " + size : ""}" aria-hidden="true">${esc(abbr)}<img src="https://a.espncdn.com/i/teamlogos/nfl/500/${code}.png" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer"></span>`;
 }
 function playerRow(p, right) {
   return `<div class="list-row">
@@ -383,6 +383,16 @@ function renderHome() {
     </section>`;
 }
 
+// Player cell for the matchup charts: stacked headshots, names, team logo.
+function chartPlayerCell(r) {
+  const ids = r.ids || [];
+  const faces = r.players.map((n, i) => {
+    const p = ids[i] && byId.get(ids[i]);
+    return p ? avatar(p) : `<span class="avatar" aria-hidden="true">${esc(initials(n.replace(".", "")))}</span>`;
+  }).join("");
+  return `<div class="chart-player"><span class="faces">${faces}</span>
+    <span class="meta"><span class="names">${namesHtml(r)}</span><small class="team-line">${teamLogo(r.team, "sm")}${esc(r.team)}</small></span></div>`;
+}
 function namesHtml(r) {
   const ids = r.ids || [];
   return r.players.map((n, i) => ids[i] && byId.get(ids[i]) ? plink(byId.get(ids[i]), n) : `<b>${esc(n)}</b>`).join(" / ");
@@ -425,15 +435,15 @@ function renderMatchups() {
   const body = playing.map(r => {
     const d = r.def, imp = val(r, "implied");
     return `<tr class="${hit(r) ? "" : "dim"}">
-      <td class="sticky l">${namesHtml(r)} <span class="team-tag">${esc(r.team)}</span></td>
-      <td><b>${r.away ? "@" : ""}${esc(r.opp)}</b><span class="kick">${esc(kickLabel(r.kick))}</span></td>
+      <td class="sticky l">${chartPlayerCell(r)}</td>
+      <td><span class="opp-cell">${teamLogo(r.opp)}<span><b>${r.away ? "@" : ""}${esc(r.opp)}</b><span class="kick">${esc(kickLabel(r.kick))}</span></span></span></td>
       <td class="${imp != null ? "scale" : ""}" style="${imp != null ? `background:${scaleColor(imp, ...st.implied, YELLOW)}` : ""}">${imp != null ? f1(imp) : "—"}</td>
       <td class="scale rank" style="background:${rankColor(d.rank[f])}">${d.rank[f]}</td>
       <td class="scale" style="background:${scaleColor(d.fppg[f], ...st.fppg)}">${f1(d.fppg[f])}</td>
       ${d.pa ? `<td class="scale pa" style="background:${scaleColor(d.pa.pts[f], ...st.pa)}">${f1(d.pa.pts[f])}<small>(${esc(d.pa.who)})</small></td>` : `<td>BYE</td>`}
       ${cols.filter(c => c.stat).map(c => `<td class="scale" style="background:${scaleColor(d.stats[c.key], ...st[c.key], YELLOW)}">${Number(d.stats[c.key]).toFixed(c.dp)}</td>`).join("")}
     </tr>`;
-  }).join("") + byes.map(r => `<tr class="bye ${hit(r) ? "" : "dim"}"><td class="sticky l" style="background:var(--bye)">${namesHtml(r)} <span class="team-tag">${esc(r.team)}</span></td>
+  }).join("") + byes.map(r => `<tr class="bye ${hit(r) ? "" : "dim"}"><td class="sticky l" style="background:var(--bye)">${chartPlayerCell(r)}</td>
       <td>BYE</td><td></td><td>BYE</td><td>BYE</td><td>BYE</td>${cols.filter(c => c.stat).map(() => "<td></td>").join("")}</tr>`).join("");
 
   const downloads = window.TSM_DOWNLOADS ? `<div class="controls"><span class="muted" style="font-size:14px">Download spreadsheets:</span>${
