@@ -1,24 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 80" role="img" aria-label="The Sports Mattress">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="The Sports Mattress">
   <defs>
-    <clipPath id="top"><rect x="6" y="10" width="108" height="44" rx="12"/></clipPath>
+    <linearGradient id="g" x1="0" x2="1" y1="0" y2="0">
+      <stop offset="0" stop-color="#e67c73"/><stop offset=".38" stop-color="#f6b26b"/>
+      <stop offset=".62" stop-color="#ffd966"/><stop offset="1" stop-color="#57bb8a"/>
+    </linearGradient>
   </defs>
-  <!-- mattress side -->
-  <rect x="6" y="40" width="108" height="30" rx="10" fill="#142033"/>
-  <path d="M16 62 H104" stroke="#ffffff" stroke-opacity=".55" stroke-width="2" stroke-dasharray="4 4" stroke-linecap="round"/>
-  <!-- quilted top: six panels, tough (red) to great (green) -->
-  <g clip-path="url(#top)">
-    <rect x="6"  y="10" width="18" height="44" fill="#e67c73"/>
-    <rect x="24" y="10" width="18" height="44" fill="#ef9a6f"/>
-    <rect x="42" y="10" width="18" height="44" fill="#f6b26b"/>
-    <rect x="60" y="10" width="18" height="44" fill="#f8cf66"/>
-    <rect x="78" y="10" width="18" height="44" fill="#a9ca7a"/>
-    <rect x="96" y="10" width="18" height="44" fill="#57bb8a"/>
-    <path d="M24 10 V54 M42 10 V54 M60 10 V54 M78 10 V54 M96 10 V54 M6 32 H114" stroke="#142033" stroke-opacity=".18" stroke-width="1.5"/>
-  </g>
-  <rect x="6" y="10" width="108" height="44" rx="12" fill="none" stroke="#142033" stroke-width="3"/>
-  <!-- tufts -->
-  <g fill="#142033" fill-opacity=".45">
-    <circle cx="24" cy="32" r="2.2"/><circle cx="42" cy="32" r="2.2"/><circle cx="60" cy="32" r="2.2"/>
-    <circle cx="78" cy="32" r="2.2"/><circle cx="96" cy="32" r="2.2"/>
-  </g>
+  <rect width="64" height="64" rx="14" fill="#111a2a"/>
+  <text x="32" y="43" text-anchor="middle" font-family="'Barlow Condensed','Arial Narrow',Arial,sans-serif" font-weight="800" font-size="30" letter-spacing="-.5" fill="url(#g)">TSM</text>
 </svg>

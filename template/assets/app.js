@@ -247,13 +247,53 @@ const ACTIONS = {
 };
 
 // ------------------------------------------------------------------ HOME
+// ESPN team logo codes (nflverse uses the same images).
+const ESPN = { LA: "lar", WAS: "wsh" };
+function teamLogo(abbr) {
+  const code = (ESPN[abbr] || abbr).toLowerCase();
+  return `<span class="tlogo" aria-hidden="true">${esc(abbr)}<img src="https://a.espncdn.com/i/teamlogos/nfl/500/${code}.png" alt="" loading="lazy" referrerpolicy="no-referrer"></span>`;
+}
+function playerRow(p, right) {
+  return `<div class="list-row">
+    <div class="pcell">${avatar(p)}<span class="meta">${plink(p)}<small>${p.pos} · ${esc(p.team)} · ${esc(oppText(p))}</small></span></div>
+    <div class="right">${right}</div></div>`;
+}
+function listPanel(items, empty) { return `<div class="panel list">${items.length ? items.join("") : `<p class="empty">${empty}</p>`}</div>`; }
+function shareRisers(key, positions, minJump) {
+  return D.players.filter(p => positions.includes(p.pos) && p.g >= 4 && !unavailable(p)).map(p => {
+    const s = p.season[key], r = p.recent[key];
+    return { p, s, r, d: s != null && r != null ? r - s : -1 };
+  }).filter(x => x.d >= minJump).sort((a, b) => b.d - a.d).slice(0, 8);
+}
+
 function renderHome() {
   const f = state.fmt;
   const playing = Object.entries(D.teams).filter(([, t]) => t.opp);
   const byes = Object.entries(D.teams).filter(([, t]) => !t.opp).map(([k]) => k);
   const topTot = playing.filter(([, t]) => t.implied != null).sort((a, b) => b[1].implied - a[1].implied)[0];
-
   const quilt = Array.from({ length: 18 }, (_, i) => `<i style="background:${scaleColor(i % 6, 0, 2.5, 5)};animation-delay:${(i * 0.37) % 3}s"></i>`).join("");
+
+  // Snap share risers (all skill positions).
+  const snapUp = shareRisers("snap", ["RB", "WR", "TE"], 0.06).map(x => playerRow(x.p,
+    `<span class="up">${pct(x.s)} → ${pct(x.r)}</span><small>snap share, last 3</small>`));
+  // Target share risers.
+  const tgtUp = shareRisers("tgtShare", ["RB", "WR", "TE"], 0.04).map(x => playerRow(x.p,
+    `<span class="up">${pct(x.s)} → ${pct(x.r)}</span><small>target share, last 3 · ${f1(x.p.l3use.tgt ?? x.p.use.tgt)} tgt/g</small>`));
+  // Injury watch.
+  const inj = D.players.filter(p => p.inj && pts(p.ppg, f) >= 9).sort((a, b) => pts(b.ppg, f) - pts(a.ppg, f)).slice(0, 8)
+    .map(p => `<div class="list-row">
+      <div class="pcell">${avatar(p)}<span class="meta">${plink(p)}<small>${p.pos} · ${esc(p.team)} · ${f1(pts(p.ppg, f))} pts/g</small></span></div>
+      <div class="right">${injBadge(p)}<small>${esc(p.inj.injury || "")}</small></div></div>`);
+  // Hot and cold: last 3 games vs season average.
+  const form = D.players.filter(p => p.g >= 5 && !p.bye).map(p => {
+    const s = pts(p.ppg, f), r = pts(p.l3, f);
+    return { p, s, r, d: r - s };
+  });
+  const hot = form.filter(x => x.r >= 10 && x.d >= 3 && x.r >= x.s * 1.2).sort((a, b) => b.d - a.d).slice(0, 8)
+    .map(x => playerRow(x.p, `<span class="up">▲ ${f1(x.r)}</span><small>last 3 · season ${f1(x.s)}</small>`));
+  const cold = form.filter(x => x.s >= 10 && x.d <= -3 && x.r <= x.s * 0.8 && !injOut(x.p)).sort((a, b) => a.d - b.d).slice(0, 8)
+    .map(x => playerRow(x.p, `<span class="down">▼ ${f1(x.r)}</span><small>last 3 · season ${f1(x.s)}</small>`));
+
   const best = POS.map(pos => {
     const rows = D.positions[pos].rows.filter(r => !r.bye).sort((a, b) => b.def.rank[f] - a.def.rank[f]).slice(0, 5);
     return `<article class="panel mcard">
@@ -264,7 +304,7 @@ function renderHome() {
     </article>`;
   }).join("");
 
-  // Slate
+  // Game slate.
   const seen = new Set(), games = [];
   for (const [abbr, t] of playing) {
     if (seen.has(abbr)) continue;
@@ -273,9 +313,8 @@ function renderHome() {
     games.push({ away, home, A: D.teams[away], H: D.teams[home], kick: t.kick });
   }
   games.sort((a, b) => (a.kick || "").localeCompare(b.kick || ""));
-  const imps = playing.map(([, t]) => t.implied).filter(v => v != null);
-  const [iMin, iMid, iMax] = stops(imps);
-  const teamRow = (abbr, t) => `<div class="game-row"><b>${esc(abbr)}</b>
+  const [iMin, iMid, iMax] = stops(playing.map(([, t]) => t.implied));
+  const teamRow = (abbr, t) => `<div class="game-row">${teamLogo(abbr)}<b>${esc(abbr)}</b>
       <span class="track"><i style="width:${t.implied != null ? Math.min(100, t.implied / 35 * 100) : 0}%;background:${scaleColor(t.implied, iMin, iMid, iMax)}"></i></span>
       <span class="num">${t.implied != null ? f1(t.implied) : "—"}</span></div>`;
   const slate = games.map(g => {
@@ -286,24 +325,6 @@ function renderHome() {
       ${teamRow(g.away, g.A)}${teamRow(g.home, g.H)}
     </article>`;
   }).join("");
-
-  // Usage risers
-  const risers = D.players.filter(p => p.pos !== "QB" && p.g >= 4 && !unavailable(p)).map(p => {
-    const key = p.pos === "RB" ? "rushShare" : "tgtShare";
-    const s = p.season[key], r = p.recent[key];
-    return { p, key, s, r, d: s != null && r != null ? r - s : -1 };
-  }).filter(x => x.d >= 0.04).sort((a, b) => b.d - a.d).slice(0, 8);
-  const risersHtml = risers.length ? risers.map(x => `<div class="list-row">
-      <div class="pcell">${avatar(x.p)}<span class="meta">${plink(x.p)}<small>${x.p.pos} · ${esc(x.p.team)} · ${esc(oppText(x.p))}</small></span></div>
-      <div class="right"><span class="trend-up">${pct(x.s)} → ${pct(x.r)}</span><small>${x.key === "rushShare" ? "rush share" : "target share"}, last 3</small></div>
-    </div>`).join("") : `<p class="empty">No big usage jumps this week.</p>`;
-
-  // Injury watch
-  const inj = D.players.filter(p => p.inj && pts(p.ppg, f) >= 9).sort((a, b) => pts(b.ppg, f) - pts(a.ppg, f)).slice(0, 10);
-  const injHtml = inj.length ? inj.map(p => `<div class="list-row">
-      <div class="pcell">${avatar(p)}<span class="meta">${plink(p)}<small>${p.pos} · ${esc(p.team)} · ${f1(pts(p.ppg, f))} pts/g</small></span></div>
-      <div class="right">${injBadge(p)}<small>${esc(p.inj.injury || "")}</small></div>
-    </div>`).join("") : `<p class="empty">No fantasy starters on the injury report yet.</p>`;
 
   $("#page").innerHTML = `
     <section class="hero">
@@ -321,11 +342,27 @@ function renderHome() {
       <div class="hero-side">
         <div class="stat-tiles">
           <div class="panel tile"><span class="k">Games</span><span class="v">${games.length}</span><span class="s">${byes.length ? `${byes.length} teams on bye` : "No byes"}</span></div>
-          <div class="panel tile"><span class="k">Top team total</span><span class="v">${topTot ? f1(topTot[1].implied) : "—"}</span><span class="s">${topTot ? `${esc(topTot[1].name)}` : "Lines not posted yet"}</span></div>
+          <div class="panel tile"><span class="k">Top team total</span><span class="v">${topTot ? f1(topTot[1].implied) : "—"}</span><span class="s">${topTot ? esc(topTot[1].name) : "Lines not posted yet"}</span></div>
           <div class="panel tile"><span class="k">Players tracked</span><span class="v">${D.players.length}</span><span class="s">QB, RB, WR, TE</span></div>
           <div class="panel tile"><span class="k">On bye</span><span class="v" style="font-size:18px;line-height:1.2">${byes.length ? esc(byes.join(", ")) : "None"}</span><span class="s">Week ${D.week}</span></div>
         </div>
       </div>
+    </section>
+
+    <section class="grid-2" style="align-items:start">
+      <div class="section"><div class="section-head"><h2>Usage risers</h2><span class="muted" style="font-size:13px">Snap share, last 3 vs season</span></div>
+        ${listPanel(snapUp, "No big snap-share jumps this week.")}</div>
+      <div class="section"><div class="section-head"><h2>Injury report</h2><span class="muted" style="font-size:13px">Week ${D.week}, fantasy starters</span></div>
+        ${listPanel(inj, "No fantasy starters on the injury report yet.")}</div>
+    </section>
+
+    <section class="grid-3" style="align-items:start">
+      <div class="section"><div class="section-head"><h2>Target share risers</h2><a href="#players">All players →</a></div>
+        ${listPanel(tgtUp, "No big target-share jumps this week.")}</div>
+      <div class="section"><div class="section-head"><div class="hc-head"><span class="hc-dot" style="background:var(--s-green)"></span><h2>Hot</h2></div><span class="muted" style="font-size:13px">Last 3 games</span></div>
+        ${listPanel(hot, "Nobody is running hot right now.")}</div>
+      <div class="section"><div class="section-head"><div class="hc-head"><span class="hc-dot" style="background:var(--s-red)"></span><h2>Cold</h2></div><span class="muted" style="font-size:13px">Last 3 games</span></div>
+        ${listPanel(cold, "Nobody is in a slump right now.")}</div>
     </section>
 
     <section class="section">
@@ -336,13 +373,6 @@ function renderHome() {
     <section class="section">
       <div class="section-head"><h2>Game slate</h2><span class="muted" style="font-size:13px">Projected points from the betting line</span></div>
       <div class="slate">${slate || `<p class="empty">The schedule for this week isn't out yet.</p>`}</div>
-    </section>
-
-    <section class="grid-2">
-      <div class="section"><div class="section-head"><h2>Usage risers</h2><a href="#players">All players →</a></div>
-        <div class="panel list">${risersHtml}</div></div>
-      <div class="section"><div class="section-head"><h2>Injury watch</h2><span class="muted" style="font-size:13px">Week ${D.week} report</span></div>
-        <div class="panel list">${injHtml}</div></div>
     </section>`;
 }
 
