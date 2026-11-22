@@ -268,9 +268,24 @@ def wx_condition(code: int, hour: int) -> str:
     return "clear-night" if night else "clear"
 
 
+def fetch_json(url: str, attempts: int = 4, timeout: int = 20):
+    """GET a JSON document, retrying with backoff (the weather API sometimes times out from CI)."""
+    import time
+    for i in range(attempts):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "fantasy-matchups-builder"})
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.load(resp)
+        except Exception as e:
+            if i == attempts - 1:
+                raise
+            print(f"  retrying weather request ({e})", file=sys.stderr)
+            time.sleep(3 * (i + 1))
+
+
 def load_weather(games: list[dict]) -> dict[str, dict]:
-    """Kickoff forecast per game_id from Open-Meteo (free, no key). Empty entries if unavailable."""
-    out = {}
+    """Kickoff forecast per game_id from Open-Meteo (free, no key), in one batched request."""
+    out, outdoor = {}, []
     for g in games:
         home, roof = g["home_team"], (g["roof"] or "").lower()
         neutral = g["location"] == "Neutral"
@@ -279,31 +294,32 @@ def load_weather(games: list[dict]) -> dict[str, dict]:
             out[g["game_id"]] = {"indoor": True}
             continue
         coords = NEUTRAL_STADIUMS.get(g["stadium_id"]) if neutral else STADIUMS.get(home)
-        if not coords or not g["gameday"] or not g["gametime"]:
-            continue
+        if coords and g["gameday"] and g["gametime"]:
+            outdoor.append((g, coords))
+    if outdoor:
+        url = URL_WEATHER.format(lat=",".join(str(c[0]) for _, c in outdoor), lon=",".join(str(c[1]) for _, c in outdoor))
         try:
-            req = urllib.request.Request(URL_WEATHER.format(lat=coords[0], lon=coords[1]),
-                                         headers={"User-Agent": "fantasy-matchups-builder"})
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                hourly = json.load(resp)["hourly"]
+            data = fetch_json(url)
+            if isinstance(data, dict):
+                data = [data]
+            for (g, _), loc in zip(outdoor, data):
+                hourly = loc["hourly"]
+                hh = int(g["gametime"].split(":")[0])    # schedule times are Eastern, as is the API's timezone
+                key = f'{g["gameday"]}T{hh:02d}:00'
+                if key not in hourly["time"]:
+                    continue
+                i = hourly["time"].index(key)
+                code = int(hourly["weather_code"][i] or 0)
+                out[g["game_id"]] = {
+                    "temp": round(hourly["temperature_2m"][i]),
+                    "wind": round(hourly["wind_speed_10m"][i]),
+                    "precip": hourly["precipitation_probability"][i],
+                    "cond": wx_condition(code, hh),
+                }
         except Exception as e:
-            print(f"  weather unavailable for {g['game_id']}: {e}", file=sys.stderr)
-            continue
-        # Kickoff hour, Eastern time (the schedule's times are Eastern).
-        hh = int(g["gametime"].split(":")[0])
-        key = f'{g["gameday"]}T{hh:02d}:00'
-        if key not in hourly["time"]:
-            continue
-        i = hourly["time"].index(key)
-        code = int(hourly["weather_code"][i] or 0)
-        out[g["game_id"]] = {
-            "temp": round(hourly["temperature_2m"][i]),
-            "wind": round(hourly["wind_speed_10m"][i]),
-            "precip": hourly["precipitation_probability"][i],
-            "cond": wx_condition(code, hh),
-        }
+            print(f"  weather unavailable: {e}", file=sys.stderr)
     got = sum(1 for v in out.values() if "temp" in v)
-    print(f"  weather: {got} outdoor forecasts, {sum(1 for v in out.values() if v.get('indoor'))} indoor games", file=sys.stderr)
+    print(f"  weather: {got} of {len(outdoor)} outdoor forecasts, {sum(1 for v in out.values() if v.get('indoor'))} indoor games", file=sys.stderr)
     return out
 
 
