@@ -6,7 +6,7 @@ points allowed to the position, what the defense gave up last week (and to whom)
 and per-game stats the defense allows. Cells are color-coded red (tough) to green (great).
 
 Data comes free from [nflverse](https://github.com/nflverse/nflverse-data): weekly player
-stats, the schedule, and daily depth charts. No API keys.
+stats, the schedule, daily depth charts, and injury reports. No API keys.
 
 ## What's on each chart
 
@@ -20,6 +20,18 @@ stats, the schedule, and daily depth charts. No API keys.
 Rank 1 = fewest fantasy points allowed, 32 = most. Switch between PPR, Half PPR and Standard
 on the page. Teams on bye are listed at the bottom. Each build also writes `.xlsx` spreadsheets
 in the same style as the original hand-made charts.
+
+## Start / Sit
+
+The **Start / Sit** tab compares any two players, at any position, so it works for flex spots. It gives a verdict
+with plain-language reasons and a side-by-side breakdown:
+
+- **Projection:** the player's own points per game (60% season average, 40% last 3 games), adjusted for how
+  many points his opponent allows to his position compared with the league average. The matchup effect
+  is halved and capped at ±25% because defensive samples are small. Under 1 point apart is called a toss-up.
+- **Matchup:** opponent, matchup rank, points allowed per game, and the size of the adjustment.
+- **Production and usage:** points per game, last 3 games, and per-game usage (targets, carries, yards, TDs).
+- **Injuries:** status from the official weekly injury report. Players who are out or on bye can't be started.
 
 ## Run it locally
 

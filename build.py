@@ -33,6 +33,7 @@ NFLVERSE = "https://github.com/nflverse/nflverse-data/releases/download"
 URL_STATS = NFLVERSE + "/stats_player/stats_player_week_{season}.csv"
 URL_SCHEDULE = NFLVERSE + "/schedules/games.csv"
 URL_DEPTH = NFLVERSE + "/depth_charts/depth_charts_{season}.csv"
+URL_INJURIES = NFLVERSE + "/injuries/injuries_{season}.csv"
 
 POSITIONS = ["QB", "RB", "WR", "TE"]
 FORMATS = {"ppr": 1.0, "half": 0.5, "std": 0.0}
@@ -145,6 +146,21 @@ def load_depth(season: int) -> dict[str, dict[str, list[dict]]]:
     return depth
 
 
+def load_injuries(season: int, week: int) -> dict[str, dict]:
+    """This week's official injury report: {gsis_id: {"status", "injury"}}. Empty if unavailable."""
+    try:
+        path = fetch(URL_INJURIES.format(season=season), f"injuries_{season}.csv")
+    except Exception as e:  # the injury file is a nice-to-have
+        print(f"  injuries unavailable: {e}", file=sys.stderr)
+        return {}
+    out = {}
+    with open(path, newline="") as f:
+        for r in csv.DictReader(f):
+            if r["week"] == str(week) and r["game_type"] == "REG" and r["report_status"] not in ("", "NA"):
+                out[r["gsis_id"]] = {"status": r["report_status"], "injury": r["report_primary_injury"]}
+    return out
+
+
 # --------------------------------------------------------------------------- analysis
 
 def pick_week(schedule: list[dict]) -> int:
@@ -162,6 +178,7 @@ def build(season: int, week: int | None) -> dict:
 
     stats = load_stats(season)
     depth = load_depth(season)
+    injuries = load_injuries(season, target)
 
     completed = {g["game_id"]: g for g in schedule
                  if g["result"] not in ("", "NA") and int(g["week"]) < target}
@@ -177,7 +194,7 @@ def build(season: int, week: int | None) -> dict:
     # Recent fantasy points per player for committee detection.
     recent_weeks = set(range(max(1, target - RECENT_GAMES), target))
     player_recent = defaultdict(lambda: [0.0, 0])            # gsis -> [ppr pts, games]
-    player_recent_by_pos = defaultdict(lambda: defaultdict(float))  # (team,pos) -> gsis -> pts
+    plog = defaultdict(list)                                 # gsis -> list of game entries
 
     for r in stats:
         if r["game_id"] not in completed:
@@ -191,6 +208,11 @@ def build(season: int, week: int | None) -> dict:
         t_all["int"] += num(r["passing_interceptions"])
         if not pos:
             continue
+        plog[r["player_id"]].append({
+            "week": week_no, "team": r["team"], "name": r["player_display_name"], "pos": pos,
+            "pts": {f: fantasy_points(r, rp) for f, rp in FORMATS.items()},
+            "use": {k: num(r[src]) for k, src in USAGE_SRC.items()},
+        })
         t = tot[(defense, pos)]
         for fmt, rp in FORMATS.items():
             pts = fantasy_points(r, rp)
@@ -289,6 +311,10 @@ def build(season: int, week: int | None) -> dict:
             "rows": rows,
         }
 
+    players_out = build_players(plog, depth, injuries, opponent, target)
+    league_avg = {pos: {f: round(sum(defense_info[pos][d]["fppg"][f] for d in teams) / len(teams), 2)
+                        for f in FORMATS} for pos in POSITIONS}
+
     return {
         "season": season,
         "week": target,
@@ -297,7 +323,67 @@ def build(season: int, week: int | None) -> dict:
         "updated": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "formats": {k: FORMAT_LABEL[k] for k in FORMATS},
         "positions": positions_out,
+        "defenses": {pos: {d: {"rank": v["rank"], "fppg": v["fppg"]} for d, v in by.items()}
+                     for pos, by in defense_info.items()},
+        "leagueAvg": league_avg,
+        "players": players_out,
     }
+
+
+USAGE_KEYS = {
+    "QB": ["att", "pyd", "ptd", "int", "car", "ryd"],
+    "RB": ["car", "ryd", "rtd", "tgt", "rec", "recyd"],
+    "WR": ["tgt", "rec", "recyd", "rectd"],
+    "TE": ["tgt", "rec", "recyd", "rectd"],
+}
+USAGE_SRC = {
+    "att": "attempts", "pyd": "passing_yards", "ptd": "passing_tds", "int": "passing_interceptions",
+    "car": "carries", "ryd": "rushing_yards", "rtd": "rushing_tds",
+    "tgt": "targets", "rec": "receptions", "recyd": "receiving_yards", "rectd": "receiving_tds",
+}
+
+
+def build_players(plog, depth, injuries, opponent, target) -> list[dict]:
+    """Per-player season and recent production, for the start/sit comparer."""
+    depth_team = {}
+    for team, by_pos in depth.items():
+        for pos, lst in by_pos.items():
+            for i, p in enumerate(lst):
+                depth_team.setdefault(p["gsis_id"], (team, pos, i + 1))
+    out = []
+    for pid, games in plog.items():
+        games.sort(key=lambda g: g["week"])
+        latest = games[-1]
+        team, pos, depth_rank = depth_team.get(pid, (latest["team"], latest["pos"], None))
+        if pos == "FB":
+            pos = "RB"
+        if pos not in POSITIONS:
+            continue
+        recent = games[-RECENT_GAMES:]
+        n = len(games)
+        ppg = {f: round(sum(g["pts"][f] for g in games) / n, 2) for f in ("ppr", "std")}
+        # Keep anyone on a current depth chart or who has been playing lately and producing.
+        active = depth_rank is not None or latest["week"] >= target - 3
+        if not active or ppg["ppr"] < 3:
+            continue
+        row = {
+            "id": pid, "name": latest["name"], "pos": pos, "team": team, "depth": depth_rank, "g": n,
+            "ppg": ppg,
+            "l3": {f: round(sum(g["pts"][f] for g in recent) / len(recent), 2) for f in ("ppr", "std")},
+            "use": {k: round(sum(g["use"][k] for g in games) / n, 1) for k in USAGE_KEYS[pos]},
+            "l3use": {k: round(sum(g["use"][k] for g in recent) / len(recent), 1) for k in USAGE_KEYS[pos]},
+            "lastWeek": latest["week"],
+        }
+        if team in opponent:
+            opp, away, kick = opponent[team]
+            row.update({"opp": opp, "away": away, "kick": kick})
+        else:
+            row["bye"] = True
+        if pid in injuries:
+            row["inj"] = injuries[pid]
+        out.append(row)
+    out.sort(key=lambda p: -p["ppg"]["ppr"])
+    return out
 
 
 # --------------------------------------------------------------------------- output
