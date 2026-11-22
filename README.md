@@ -47,7 +47,7 @@ Then open `site/index.html`.
 
 1. Create a GitHub repository and push this folder to `main`.
 2. In the repo, go to **Settings → Pages** and set **Source** to **GitHub Actions**.
-3. The workflow in `.github/workflows/update.yml` runs on every push and every morning,
+3. The workflow in `.github/workflows/update.yml` runs every **Wednesday at 10am** and **Sunday at 5am** (US Eastern) and on every push,
    and publishes to `https://<your-user>.github.io/<repo>/`.
 4. To rebuild by hand, open **Actions → Update matchup charts → Run workflow**.
 

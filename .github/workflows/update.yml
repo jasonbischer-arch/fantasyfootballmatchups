@@ -1,10 +1,14 @@
 name: Update matchup charts
 
 on:
+  # Wednesday 10:00am and Sunday 5:00am US Eastern.
+  # GitHub schedules run in UTC with no daylight saving, so each slot is listed for both
+  # EDT (UTC-4) and EST (UTC-5); the "when" job skips whichever doesn't match New York time.
   schedule:
-    # Every day at 11:00 UTC (6-7am US Eastern). Stats land after Monday night,
-    # and daily runs keep depth charts (injuries, starters) current.
-    - cron: "0 11 * * *"
+    - cron: "0 14 * * 3"   # Wed 10am EDT
+    - cron: "0 15 * * 3"   # Wed 10am EST
+    - cron: "0 9 * * 0"    # Sun 5am EDT
+    - cron: "0 10 * * 0"   # Sun 5am EST
   workflow_dispatch:
     inputs:
       week:
@@ -23,7 +27,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  when:
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.check.outputs.go }}
+    steps:
+      - id: check
+        env:
+          SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          if [ -z "$SCHEDULE" ]; then echo "go=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          # Hours behind UTC in New York right now: 4 during daylight saving, 5 otherwise.
+          offset=$(TZ=America/New_York date +%z | sed 's/^-0*//;s/00$//')
+          case "$offset:$SCHEDULE" in
+            "4:0 14 * * 3"|"4:0 9 * * 0"|"5:0 15 * * 3"|"5:0 10 * * 0") go=true ;;
+            *) go=false ;;
+          esac
+          echo "New York is UTC-$offset; schedule '$SCHEDULE' -> go=$go"
+          echo "go=$go" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: when
+    if: needs.when.outputs.go == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
