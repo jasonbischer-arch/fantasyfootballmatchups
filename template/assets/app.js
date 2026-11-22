@@ -13,7 +13,7 @@ const byId = new Map();
 const byLabel = new Map();
 const state = {
   fmt: "ppr", page: "home", pos: "QB", sort: null, q: "",
-  pl: { pos: "ALL", team: "", q: "", sort: { key: "ppg", dir: -1 } },
+  pl: { pos: "ALL", team: "", q: "", sort: { key: "ppg", dir: -1 }, limit: 50 },
   sos: { pos: "RB", sort: { key: "next4", dir: -1 } },
   tm: { sort: { key: "implied", dir: -1 } },
 };
@@ -64,7 +64,7 @@ const rankColor = r => scaleColor(r, 1, 16.5, 32, ORANGE);
 const rankChip = (r, title) => r == null ? `<span class="badge">BYE</span>` : `<span class="rchip" style="background:${rankColor(r)}"${title ? ` title="${esc(title)}"` : ""}>${r}</span>`;
 
 function avatar(p) {
-  return `<span class="avatar" aria-hidden="true">${esc(initials(p.name))}${p.img ? `<img src="${esc(p.img)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ""}</span>`;
+  return `<span class="avatar" aria-hidden="true">${esc(initials(p.name))}${p.img ? `<img src="${esc(p.img)}" alt="" loading="lazy" decoding="async" width="34" height="34" referrerpolicy="no-referrer">` : ""}</span>`;
 }
 const plink = (p, text) => `<button type="button" class="plink" data-pid="${esc(p.id)}">${esc(text ?? p.name)}</button>`;
 function sortBtn(key, label, cur) {
@@ -207,11 +207,14 @@ function onClick(e) {
   const row = e.target.closest("tr[data-rowpid]");
   if (row) return openPlayer(row.dataset.rowpid);
 }
+// Re-render after a short pause in typing rather than on every keystroke.
+let renderTimer = 0;
+function renderSoon() { clearTimeout(renderTimer); renderTimer = setTimeout(render, 160); }
 function onInput(e) {
   const t = e.target;
-  if (t.id === "mSearch") { state.q = t.value; return render(); }
-  if (t.id === "plSearch") { state.pl.q = t.value; return render(); }
-  if (t.id === "plTeam") { state.pl.team = t.value; return render(); }
+  if (t.id === "mSearch") { state.q = t.value; return renderSoon(); }
+  if (t.id === "plSearch") { state.pl.q = t.value; state.pl.limit = 50; return renderSoon(); }
+  if (t.id === "plTeam") { state.pl.team = t.value; state.pl.limit = 50; return render(); }
   if (t.id === "pickA" || t.id === "pickB") {
     const slot = t.id === "pickA" ? "a" : "b";
     const v = t.value.trim();
@@ -224,7 +227,9 @@ function onInput(e) {
 }
 const ACTIONS = {
   pos(el) { location.hash = el.dataset.v.toLowerCase(); },
-  plpos(el) { state.pl.pos = el.dataset.v; render(); },
+  plpos(el) { state.pl.pos = el.dataset.v; state.pl.limit = 50; render(); },
+  plmore() { state.pl.limit += 50; render(); },
+  plall() { state.pl.limit = 1e9; render(); },
   sospos(el) { state.sos.pos = el.dataset.v; render(); },
   swap() { [ss.a, ss.b] = [ss.b, ss.a]; saveSS(); renderStartSit(); },
   close() { closePlayer(); },
@@ -280,7 +285,8 @@ function renderHome() {
   const tgtUp = shareRisers("tgtShare", ["RB", "WR", "TE"], 0.04).map(x => playerRow(x.p,
     `<span class="up">${pct(x.s)} → ${pct(x.r)}</span><small>target share, last 3 · ${f1(x.p.l3use.tgt ?? x.p.use.tgt)} tgt/g</small>`));
   // Injury watch.
-  const inj = D.players.filter(p => p.inj && pts(p.ppg, f) >= 9).sort((a, b) => pts(b.ppg, f) - pts(a.ppg, f)).slice(0, 8)
+  // Chosen by PPR average so the list stays the same whichever scoring format is selected.
+  const inj = D.players.filter(p => p.inj && p.ppg.ppr >= 9).sort((a, b) => b.ppg.ppr - a.ppg.ppr).slice(0, 8)
     .map(p => `<div class="list-row">
       <div class="pcell">${avatar(p)}<span class="meta">${plink(p)}<small>${p.pos} · ${esc(p.team)} · ${f1(pts(p.ppg, f))} pts/g</small></span></div>
       <div class="right">${injBadge(p)}<small>${esc(p.inj.injury || "")}</small></div></div>`);
@@ -349,6 +355,11 @@ function renderHome() {
       </div>
     </section>
 
+    <section class="section">
+      <div class="section-head"><h2>Best matchups this week</h2><span class="muted" style="font-size:13px">Rank 32 = defense allows the most ${esc(fmtLabel())} points to the position</span></div>
+      <div class="grid-4">${best}</div>
+    </section>
+
     <section class="grid-2" style="align-items:start">
       <div class="section"><div class="section-head"><h2>Usage risers</h2><span class="muted" style="font-size:13px">Snap share, last 3 vs season</span></div>
         ${listPanel(snapUp, "No big snap-share jumps this week.")}</div>
@@ -365,10 +376,6 @@ function renderHome() {
         ${listPanel(cold, "Nobody is in a slump right now.")}</div>
     </section>
 
-    <section class="section">
-      <div class="section-head"><h2>Best matchups this week</h2><span class="muted" style="font-size:13px">Rank 32 = defense allows the most ${esc(fmtLabel())} points to the position</span></div>
-      <div class="grid-4">${best}</div>
-    </section>
 
     <section class="section">
       <div class="section-head"><h2>Game slate</h2><span class="muted" style="font-size:13px">Projected points from the betting line</span></div>
@@ -726,7 +733,7 @@ function renderPlayers() {
   };
   const g = get(pl.sort.key);
   list = list.slice().sort((a, b) => cmp(g(a), g(b), pl.sort.dir));
-  const shown = list.slice(0, 250);
+  const shown = list.slice(0, pl.limit);
   const teams = Object.keys(D.teams).sort();
   const body = shown.map(p => {
     const d = defFor(p);
@@ -753,8 +760,9 @@ function renderPlayers() {
       <thead><tr><th class="sticky l" scope="col">${sortBtn("name", "Player", pl.sort)}</th>${cols.map(c => `<th scope="col">${sortBtn(c.key, c.label, pl.sort)}</th>`).join("")}<th scope="col">${sortBtn("next", `Wk ${D.week}`, pl.sort)}</th></tr></thead>
       <tbody>${body || `<tr><td colspan="${cols.length + 2}" class="empty">No players match those filters.</td></tr>`}</tbody>
     </table></div>
+    <div class="more">${list.length ? `Showing ${shown.length} of ${list.length} players` : ""}${list.length > shown.length ? ` <button type="button" class="btn small" data-action="plmore">Show ${Math.min(50, list.length - shown.length)} more</button><button type="button" class="btn small" data-action="plall">Show all</button>` : ""}</div>
     <div class="notes">
-      <p>${list.length > shown.length ? `Showing the top ${shown.length} of ${list.length}. Narrow it down with the filters. ` : ""}Season averages over games played. Shares are the player's part of his team's total in the games he played.</p>
+      <p>Season averages over games played. Shares are the player's part of his team's total in the games he played.</p>
       <p><strong>Snap %</strong> share of offensive snaps. <strong>Tgt %</strong> share of team targets. <strong>Air %</strong> share of team air yards (how far downfield passes travel). <strong>WOPR</strong> weighted opportunity rating, 1.5 × target share + 0.7 × air yards share; above 0.5 is elite for a receiver. <strong>Rush %</strong> share of team carries. <strong>RZ opp</strong> targets plus carries inside the opponent's 20.</p>
     </div>`;
 }

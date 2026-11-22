@@ -563,7 +563,8 @@ def build_players(plog, depth, injuries, opponent, target, snaps, pbp_player, te
             "log": log,
         }
         if latest["headshot"]:
-            row["img"] = latest["headshot"]
+            # Ask the image CDN for a small thumbnail instead of the full-size photo.
+            row["img"] = latest["headshot"].replace("/upload/f_auto,q_auto/", "/upload/f_auto,q_auto,w_120/")
         if team in opponent:
             opp, away, kick = opponent[team]
             row.update({"opp": opp, "away": away, "kick": kick})

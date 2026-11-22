@@ -105,6 +105,7 @@ h3 { font: 700 18px/1.1 var(--display); text-transform: uppercase; letter-spacin
 .notes { color: var(--muted); font-size: 13px; display: grid; gap: 4px; max-width: 75ch; }
 .notes p { margin: 0; }
 .empty { padding: 36px 16px; text-align: center; color: var(--muted); }
+.more { display: flex; justify-content: center; gap: 12px; align-items: center; color: var(--muted); font-size: 13px; flex-wrap: wrap; }
 
 /* ------------------------------------------------------------------ controls */
 .controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
@@ -154,7 +155,6 @@ tr.bye td { background: var(--bye); color: var(--ink); }
 tr.dim { display: none; }
 tr.clickable { cursor: pointer; }
 tr.clickable:hover td { background: var(--surface-2); }
-tr.clickable:hover td.scale { filter: brightness(.97); }
 td.bar-cell { position: relative; min-width: 72px; }
 td.bar-cell .fill { position: absolute; left: 0; top: 6px; bottom: 6px; background: var(--accent-soft); border-radius: 0 4px 4px 0; }
 td.bar-cell span { position: relative; }
@@ -335,8 +335,4 @@ dialog.drawer::backdrop { background: rgb(10 16 28 / .45); }
   .usage-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .slot { grid-template-columns: 48px minmax(0, 1fr) auto auto; gap: 8px; padding: 10px; }
   .hero-main { padding: 18px; }
-}
-@media (prefers-reduced-motion: no-preference) {
-  .hero-quilt i { animation: quilt 6s ease-in-out infinite alternate; }
-  @keyframes quilt { from { opacity: .7; } to { opacity: 1; } }
 }
