@@ -280,7 +280,8 @@ function renderHome() {
   const starters = D.players.filter(p => !unavailable(p) && p.g >= 3);
   const smash = starters.filter(p => p.ppg.ppr >= 10)
     .sort((a, b) => defFor(b).rank[f] - defFor(a).rank[f] || project(b).proj - project(a).proj)[0];
-  const fade = starters.filter(p => p.ppg.ppr >= 12)
+  // Fade: a mid-range starter (8–12 PPR pts/g, so the pick stays the same in every format) with the toughest matchup.
+  const fade = starters.filter(p => p.ppg.ppr >= 8 && p.ppg.ppr <= 12)
     .sort((a, b) => defFor(a).rank[f] - defFor(b).rank[f] || b.ppg.ppr - a.ppg.ppr)[0];
   const byeStars = D.players.filter(p => p.bye).sort((a, b) => b.ppg.ppr - a.ppg.ppr).slice(0, 3);
   const tileName = p => `<span class="v tile-name">${plink(p)}</span>`;
