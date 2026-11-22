@@ -40,6 +40,29 @@ URL_SNAPS = NFLVERSE + "/snap_counts/snap_counts_{season}.csv"
 URL_PLAYERS = NFLVERSE + "/players/players.csv"
 URL_PBP = NFLVERSE + "/pbp/play_by_play_{season}.csv.gz"
 
+# Home stadium coordinates, for kickoff weather. Fixed domes are always indoors;
+# retractable roofs count as indoors unless the schedule says the roof is open.
+STADIUMS = {
+    "ARI": (33.5276, -112.2626), "ATL": (33.7554, -84.4008), "BAL": (39.2780, -76.6227), "BUF": (42.7738, -78.7870),
+    "CAR": (35.2258, -80.8528), "CHI": (41.8623, -87.6167), "CIN": (39.0955, -84.5161), "CLE": (41.5061, -81.6995),
+    "DAL": (32.7473, -97.0945), "DEN": (39.7439, -105.0201), "DET": (42.3400, -83.0456), "GB": (44.5013, -88.0622),
+    "HOU": (29.6847, -95.4107), "IND": (39.7601, -86.1639), "JAX": (30.3239, -81.6373), "KC": (39.0489, -94.4839),
+    "LA": (33.9535, -118.3392), "LAC": (33.9535, -118.3392), "LV": (36.0909, -115.1833), "MIA": (25.9580, -80.2389),
+    "MIN": (44.9737, -93.2581), "NE": (42.0909, -71.2643), "NO": (29.9511, -90.0812), "NYG": (40.8135, -74.0745),
+    "NYJ": (40.8135, -74.0745), "PHI": (39.9008, -75.1675), "PIT": (40.4468, -80.0158), "SEA": (47.5952, -122.3316),
+    "SF": (37.4030, -121.9700), "TB": (27.9759, -82.5033), "TEN": (36.1665, -86.7713), "WAS": (38.9077, -76.8645),
+}
+NEUTRAL_STADIUMS = {  # international and neutral-site games, by nflverse stadium_id
+    "MEX00": (19.3029, -99.1505), "LON00": (51.5560, -0.2796), "LON02": (51.6043, -0.0664),
+    "GER00": (48.2188, 11.6247), "MUN00": (48.2188, 11.6247), "FRA00": (50.0686, 8.6455), "BER00": (52.5147, 13.2395),
+    "SAO00": (-23.5453, -46.4742), "DUB00": (53.3607, -6.2511), "MAD00": (40.4531, -3.6883), "MEL00": (-37.8200, 144.9834),
+}
+FIXED_DOMES = {"DET", "LV", "MIN", "NO", "LA", "LAC"}
+RETRACTABLE = {"ARI", "ATL", "DAL", "HOU", "IND"}
+URL_WEATHER = ("https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
+               "&hourly=temperature_2m,precipitation_probability,wind_speed_10m,weather_code"
+               "&temperature_unit=fahrenheit&wind_speed_unit=mph&timezone=America%2FNew_York&past_days=3&forecast_days=16")
+
 TEAM_NAMES = {
     "ARI": "Arizona Cardinals", "ATL": "Atlanta Falcons", "BAL": "Baltimore Ravens", "BUF": "Buffalo Bills",
     "CAR": "Carolina Panthers", "CHI": "Chicago Bears", "CIN": "Cincinnati Bengals", "CLE": "Cleveland Browns",
@@ -227,6 +250,63 @@ def load_pbp(season: int, game_ids: set[str]):
     return player, team
 
 
+def wx_condition(code: int, hour: int) -> str:
+    """Open-Meteo WMO weather code -> icon name."""
+    night = hour >= 18 or hour < 6
+    if code in (95, 96, 99):
+        return "storm"
+    if code in (71, 73, 75, 77, 85, 86):
+        return "snow"
+    if code in (51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82):
+        return "rain"
+    if code in (45, 48):
+        return "fog"
+    if code == 3:
+        return "cloud"
+    if code in (1, 2):
+        return "partly-night" if night else "partly"
+    return "clear-night" if night else "clear"
+
+
+def load_weather(games: list[dict]) -> dict[str, dict]:
+    """Kickoff forecast per game_id from Open-Meteo (free, no key). Empty entries if unavailable."""
+    out = {}
+    for g in games:
+        home, roof = g["home_team"], (g["roof"] or "").lower()
+        neutral = g["location"] == "Neutral"
+        indoor = roof in ("dome", "closed") or (not neutral and (home in FIXED_DOMES or (home in RETRACTABLE and roof != "open")))
+        if indoor:
+            out[g["game_id"]] = {"indoor": True}
+            continue
+        coords = NEUTRAL_STADIUMS.get(g["stadium_id"]) if neutral else STADIUMS.get(home)
+        if not coords or not g["gameday"] or not g["gametime"]:
+            continue
+        try:
+            req = urllib.request.Request(URL_WEATHER.format(lat=coords[0], lon=coords[1]),
+                                         headers={"User-Agent": "fantasy-matchups-builder"})
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                hourly = json.load(resp)["hourly"]
+        except Exception as e:
+            print(f"  weather unavailable for {g['game_id']}: {e}", file=sys.stderr)
+            continue
+        # Kickoff hour, Eastern time (the schedule's times are Eastern).
+        hh = int(g["gametime"].split(":")[0])
+        key = f'{g["gameday"]}T{hh:02d}:00'
+        if key not in hourly["time"]:
+            continue
+        i = hourly["time"].index(key)
+        code = int(hourly["weather_code"][i] or 0)
+        out[g["game_id"]] = {
+            "temp": round(hourly["temperature_2m"][i]),
+            "wind": round(hourly["wind_speed_10m"][i]),
+            "precip": hourly["precipitation_probability"][i],
+            "cond": wx_condition(code, hh),
+        }
+    got = sum(1 for v in out.values() if "temp" in v)
+    print(f"  weather: {got} outdoor forecasts, {sum(1 for v in out.values() if v.get('indoor'))} indoor games", file=sys.stderr)
+    return out
+
+
 def load_injuries(season: int, week: int) -> dict[str, dict]:
     """This week's official injury report: {gsis_id: {"status", "injury"}}. Empty if unavailable."""
     try:
@@ -409,7 +489,8 @@ def build(season: int, week: int | None) -> dict:
         team_weeks[g["home_team"]].add(int(g["week"]))
         team_weeks[g["away_team"]].add(int(g["week"]))
     players_out = build_players(plog, depth, injuries, opponent, target, snaps, pbp_player, team_game, team_weeks)
-    teams_out = build_teams(schedule, completed, target, pbp_team, teams)
+    weather = load_weather([g for g in schedule if int(g["week"]) == target])
+    teams_out = build_teams(schedule, completed, target, pbp_team, teams, weather)
     league_avg = {pos: {f: round(sum(defense_info[pos][d]["fppg"][f] for d in teams) / len(teams), 2)
                         for f in FORMATS} for pos in POSITIONS}
 
@@ -430,7 +511,7 @@ def build(season: int, week: int | None) -> dict:
     }
 
 
-def build_teams(schedule, completed, target, pbp_team, teams) -> dict:
+def build_teams(schedule, completed, target, pbp_team, teams, weather) -> dict:
     """Team context: this week's betting lines, scoring, pace, pass tendencies, remaining schedule."""
     out = {t: {"name": TEAM_NAMES.get(t, t), "sched": [], "pf": 0.0, "pa": 0.0, "g": 0} for t in teams}
     for g in completed.values():
@@ -450,6 +531,8 @@ def build_teams(schedule, completed, target, pbp_team, teams) -> dict:
             kick = f'{g["gameday"]} {g["gametime"]}'.strip()
             spread, total = g["spread_line"], g["total_line"]
             game = {"kick": kick, "roof": g["roof"] if g["roof"] not in ("", "NA") else ""}
+            if g["game_id"] in weather:
+                game["wx"] = weather[g["game_id"]]
             if spread not in ("", "NA") and total not in ("", "NA"):
                 sp, tot = num(spread), num(total)   # spread_line > 0 means the home team is favored
                 game.update({"total": tot})

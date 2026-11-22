@@ -81,6 +81,32 @@ function cmp(a, b, dir) {
   return (typeof a === "string" ? a.localeCompare(b) : a - b) * dir;
 }
 
+// ------------------------------------------------------------------ weather
+const SUN = `<circle cx="12" cy="12" r="4.2" fill="#f6b26b"/><g stroke="#f6b26b" stroke-width="1.8" stroke-linecap="round"><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6"/></g>`;
+const MOON = `<path d="M15.5 3.5a8.5 8.5 0 1 0 5 13.6A7 7 0 0 1 15.5 3.5z" fill="#c9b8f0"/>`;
+const CLOUD = (y = 0, fill = "#b8c2d4") => `<path d="M7 ${18 + y}h10.5a3.5 3.5 0 0 0 .3-7A5 5 0 0 0 8.2 9.7 4.2 4.2 0 0 0 7 ${18 + y}z" fill="${fill}"/>`;
+const WX_ICONS = {
+  clear: SUN,
+  "clear-night": MOON,
+  partly: `<g transform="translate(-3 -3) scale(.75)">${SUN}</g>${CLOUD(1)}`,
+  "partly-night": `<g transform="translate(-2 -3) scale(.7)">${MOON}</g>${CLOUD(1)}`,
+  cloud: CLOUD(-1, "#9aa6bc"),
+  fog: `${CLOUD(-4, "#b8c2d4")}<g stroke="#9aa6bc" stroke-width="1.8" stroke-linecap="round"><path d="M5 18h14M7 21h10"/></g>`,
+  rain: `${CLOUD(-4, "#9aa6bc")}<g stroke="#4a90d9" stroke-width="1.8" stroke-linecap="round"><path d="M8 17l-1 3M12 17l-1 3M16 17l-1 3"/></g>`,
+  snow: `${CLOUD(-4, "#b8c2d4")}<g fill="#7aa7e8"><circle cx="8" cy="18.5" r="1.3"/><circle cx="12" cy="20.5" r="1.3"/><circle cx="16" cy="18.5" r="1.3"/></g>`,
+  storm: `${CLOUD(-4, "#7d8799")}<path d="M12.5 15l-3 4.5h2.5l-1.5 3.5 4-5h-2.5l1.5-3z" fill="#f6c75f"/>`,
+  indoor: `<path d="M3 13a9 7 0 0 1 18 0v6H3z" fill="#a9b6cc"/><path d="M3 13a9 7 0 0 1 18 0" fill="none" stroke="#7d8aa3" stroke-width="1.5"/><g stroke="#ffffff" stroke-opacity=".7" stroke-width="1.2"><path d="M7.5 8.2v10.8M12 6v13M16.5 8.2v10.8"/></g>`,
+};
+const WX_LABEL = { clear: "Clear", "clear-night": "Clear", partly: "Partly cloudy", "partly-night": "Partly cloudy", cloud: "Cloudy", fog: "Fog", rain: "Rain", snow: "Snow", storm: "Thunderstorms", indoor: "Indoors" };
+function wxIcon(cond) { return `<svg class="wx-icon" viewBox="0 0 24 24" aria-hidden="true">${WX_ICONS[cond] || ""}</svg>`; }
+function wxRough(w) { return w && !w.indoor && (w.wind >= 15 || (w.precip ?? 0) >= 50 || w.temp <= 25 || w.cond === "snow" || w.cond === "storm"); }
+function wxCell(w) {
+  if (!w) return `<td class="muted" title="Forecast not available yet">—</td>`;
+  if (w.indoor) return `<td class="wx" title="Indoors"><span class="wx-in">${wxIcon("indoor")}<span><b>Indoors</b></span></span></td>`;
+  const tip = `${WX_LABEL[w.cond]}, ${w.temp}°F, wind ${w.wind} mph, ${w.precip ?? 0}% chance of precipitation at kickoff`;
+  return `<td class="wx${wxRough(w) ? " wx-rough" : ""}" title="${esc(tip)}"><span class="wx-in">${wxIcon(w.cond)}<span><b>${w.temp}°</b><span class="kick">${w.wind} mph · ${w.precip ?? 0}%</span></span></span></td>`;
+}
+
 // ------------------------------------------------------------------ player model
 function playerLabel(p) { return `${p.name} (${p.pos}, ${p.team})`; }
 function injOut(p) { return p.inj && /^(out|ir|pup)/i.test(p.inj.status); }
@@ -425,6 +451,7 @@ function renderMatchups() {
   const cols = [
     { key: "player", label: pos, cls: "sticky l" },
     { key: "opp", label: "Opp" },
+    { key: "wx", label: "Weather" },
     { key: "implied", label: "Team Tot" },
     { key: "rank", label: "Rank" },
     { key: "fppg", label: "FPPG" },
@@ -437,6 +464,7 @@ function renderMatchups() {
       case "player": return r.players.join("/");
       case "opp": return r.opp;
       case "implied": return (D.teams[r.team] || {}).implied;
+      case "wx": { const w = (D.teams[r.team] || {}).wx; return !w ? null : w.indoor ? 200 : w.temp; }
       case "rank": return d.rank[f];
       case "fppg": return d.fppg[f];
       case "pa": return d.pa ? d.pa.pts[f] : null;
@@ -457,6 +485,7 @@ function renderMatchups() {
     return `<tr class="${hit(r) ? "" : "dim"}">
       <td class="sticky l">${chartPlayerCell(r)}</td>
       <td><span class="opp-cell">${teamLogo(r.opp)}<span><b>${r.away ? "@" : ""}${esc(r.opp)}</b><span class="kick">${esc(kickLabel(r.kick))}</span></span></span></td>
+      ${wxCell((D.teams[r.team] || {}).wx)}
       <td class="${imp != null ? "scale" : ""}" style="${imp != null ? `background:${scaleColor(imp, ...st.implied, YELLOW)}` : ""}">${imp != null ? f1(imp) : "—"}</td>
       <td class="scale rank" style="background:${rankColor(d.rank[f])}">${d.rank[f]}</td>
       <td class="scale" style="background:${scaleColor(d.fppg[f], ...st.fppg)}">${f1(d.fppg[f])}</td>
@@ -464,7 +493,7 @@ function renderMatchups() {
       ${cols.filter(c => c.stat).map(c => `<td class="scale" style="background:${scaleColor(d.stats[c.key], ...st[c.key], YELLOW)}">${Number(d.stats[c.key]).toFixed(c.dp)}</td>`).join("")}
     </tr>`;
   }).join("") + byes.map(r => `<tr class="bye ${hit(r) ? "" : "dim"}"><td class="sticky l" style="background:var(--bye)">${chartPlayerCell(r)}</td>
-      <td>BYE</td><td></td><td>BYE</td><td>BYE</td><td>BYE</td>${cols.filter(c => c.stat).map(() => "<td></td>").join("")}</tr>`).join("");
+      <td>BYE</td><td></td><td></td><td>BYE</td><td>BYE</td><td>BYE</td>${cols.filter(c => c.stat).map(() => "<td></td>").join("")}</tr>`).join("");
 
   const downloads = window.TSM_DOWNLOADS ? `<div class="controls"><span class="muted" style="font-size:14px">Download spreadsheets:</span>${
     Object.values(D.formats).map(l => `<a class="btn small" href="Week_${D.week}_Matchups_${l.replace(/ /g, "_")}.xlsx">${l} .xlsx</a>`).join("")}</div>` : "";
@@ -476,13 +505,17 @@ function renderMatchups() {
       <input id="mSearch" type="search" placeholder="Find a player or team" aria-label="Find a player or team" value="${esc(state.q)}">
     </div>
     <div class="legend"><span>Tough matchup</span><span class="bar" aria-hidden="true"></span><span>Great matchup</span><span>Rank 1 = fewest ${esc(fmtLabel())} points allowed to ${POS_NAME[pos]}, 32 = most</span></div>
+    <div class="chart-key">
+      <p><b>Team Tot</b> is the team's projected points for this game, worked out from the betting line (the over/under and the spread). More projected points means more scoring chances for its ${POS_NAME[pos]}.</p>
+      <p><b>Weather</b> is the forecast at kickoff: temperature, wind and chance of rain or snow. Yellow means rough conditions (15+ mph wind, 50%+ precipitation or 25°F and below), which tend to hurt passing and kicking.</p>
+    </div>
     <div class="table-box"><table>
-      <thead><tr>${cols.map(c => `<th class="${c.cls || ""}" scope="col">${sortBtn(c.key, c.label, state.sort)}</th>`).join("")}</tr></thead>
+      <thead><tr>${cols.map(c => `<th class="${c.cls || ""}" scope="col"${c.key === "implied" ? ' title="Projected points for this team, from the betting line"' : c.key === "wx" ? ' title="Kickoff forecast"' : ""}>${sortBtn(c.key, c.label, state.sort)}</th>`).join("")}</tr></thead>
       <tbody>${body}</tbody></table></div>
     ${downloads}
     <div class="notes">
       <p>Every stat is what the <strong>opponent's defense</strong> has allowed per game to ${POS_NAME[pos]} this season, through Week ${D.statsThrough}.</p>
-      <p>Team Tot is the team's projected points from the betting line. FPPG is ${esc(fmtLabel())} points allowed per game. PA Wk ${D.prevWeek} is what that defense gave up to ${POS_NAME[pos]} last week, and who scored the most.</p>
+      <p>FPPG is ${esc(fmtLabel())} points allowed per game. PA Wk ${D.prevWeek} is what that defense gave up to ${POS_NAME[pos]} last week, and who scored the most.</p>
       <p>${pos === "QB" ? "Passing numbers count every pass thrown against the defense." : pos === "WR" ? "Up to three receivers from the current depth chart are listed per team." : "A second player is listed when he scores at least 60% as much as the starter over the last three games."} Click a name for usage and game logs, or a column header to sort.</p>
     </div>`;
 }

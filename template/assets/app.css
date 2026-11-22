@@ -252,6 +252,13 @@ tr.bye .chart-player .faces .avatar { border-color: var(--bye); }
 .chart-player .meta { display: grid; gap: 2px; line-height: 1.15; }
 .team-line { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: .04em; }
 .opp-cell { display: inline-flex; align-items: center; gap: 8px; text-align: left; }
+.wx-in { display: inline-flex; align-items: center; gap: 6px; text-align: left; }
+.wx-icon { width: 26px; height: 26px; flex: none; }
+td.wx-rough { background: #fdf1c7; color: var(--cell-ink); }
+td.wx-rough .kick { color: #6b5a1e; }
+.chart-key { display: grid; gap: 4px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; font-size: 13px; color: var(--muted); max-width: 900px; }
+.chart-key p { margin: 0; }
+.chart-key b { color: var(--ink); }
 .list-row .right .up { color: var(--win); font-weight: 700; }
 .list-row .right .down { color: var(--bad); font-weight: 700; }
 .hc-head { display: flex; align-items: center; gap: 8px; }
