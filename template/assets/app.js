@@ -712,7 +712,7 @@ function rosterRow(slot, x, removable) {
   return `<div class="slot">
     <span class="slot-tag">${slot}</span>
     <div class="pcell">${avatar(p)}<span class="meta"><span>${plink(p)} ${injBadge(p)}</span>
-      <small>${p.pos} · ${esc(p.team)} · ${esc(oppText(p))}${d ? ` · ${esc(kickLabel(p.kick))}` : ""}</small></span></div>
+      <small class="pline">${p.pos} · ${teamLogo(p.team, "sm")}${esc(p.team)} ${p.bye ? "· BYE" : `${p.away ? "@" : "vs"} ${teamLogo(p.opp, "sm")}${esc(p.opp)} · ${esc(kickLabel(p.kick))}`}</small></span></div>
     <span>${d ? rankChip(d.rank[f], `Matchup rank vs ${p.pos}`) : ""}</span>
     <span style="display:flex;align-items:center;gap:6px"><span class="proj">${unavailable(p) ? "—" : f1(x.proj)}</span>${removable ? `<button type="button" class="x" data-action="rmroster" data-id="${esc(p.id)}" aria-label="Remove ${esc(p.name)}">×</button>` : ""}</span>
   </div>`;
@@ -856,9 +856,9 @@ function renderSchedule() {
     <div class="table-box"><table class="sos">
       <thead><tr><th class="sticky l" scope="col">${sortBtn("team", "Team", s)}</th><th scope="col">${sortBtn("next4", "Next 4", s)}</th><th scope="col">${sortBtn("ros", "Rest of season", s)}</th>${hasPO ? `<th scope="col">${sortBtn("po", "Wk 15–17", s)}</th>` : ""}
         ${weeks.map(w => `<th scope="col" class="${PLAYOFF_WEEKS.has(w) ? "po" : ""}">Wk ${w}</th>`).join("")}</tr></thead>
-      <tbody>${rows.map(r => `<tr><td class="sticky l"><b>${esc(r.abbr)}</b> <span class="team-tag">${esc(r.t.name.split(" ").slice(-1)[0])}</span></td>
+      <tbody>${rows.map(r => `<tr><td class="sticky l"><span class="team-cell">${teamLogo(r.abbr)}<span><b>${esc(r.abbr)}</b> <span class="team-tag">${esc(r.t.name.split(" ").slice(-1)[0])}</span></span></span></td>
         ${avgCell(r.next4)}${avgCell(r.ros)}${hasPO ? avgCell(r.po) : ""}
-        ${weeks.map(w => { const gm = r.byWeek.get(w); return gm ? `<td class="wk scale" style="background:${rankColor(gm.rank)}" title="${esc(D.teams[gm.opp].name)}: ${gm.rank} vs ${pos}">${gm.away ? "@" : ""}${esc(gm.opp)}</td>` : `<td class="wk bye">BYE</td>`; }).join("")}</tr>`).join("")}</tbody>
+        ${weeks.map(w => { const gm = r.byWeek.get(w); return gm ? `<td class="wk scale" style="background:${rankColor(gm.rank)}" title="${esc(D.teams[gm.opp].name)}: ${gm.rank} vs ${pos}"><span class="wk-cell">${teamLogo(gm.opp, "xs")}<span>${gm.away ? "@" : ""}${esc(gm.opp)}</span></span></td>` : `<td class="wk bye">BYE</td>`; }).join("")}</tr>`).join("")}</tbody>
     </table></div>
     <div class="notes"><p>Ranks use defensive results so far this season (through Week ${D.statsThrough}), so they shift as the season goes on. Weeks 15–17 are the usual fantasy playoffs, and are underlined.</p></div>`;
 }
@@ -892,8 +892,8 @@ function renderTeams() {
     ${pageHead(`Week ${D.week}`, "Team Tendencies", "Fantasy points follow volume. These are the offenses that run the most plays, throw the most, and are projected to score the most this week.")}
     <div class="table-box"><table>
       <thead><tr><th class="sticky l" scope="col">${sortBtn("team", "Team", s)}</th><th scope="col">Wk ${D.week}</th>${cols.map(c => `<th scope="col">${sortBtn(c.key, c.label, s)}</th>`).join("")}</tr></thead>
-      <tbody>${rows.map(r => `<tr><td class="sticky l"><b>${esc(r.abbr)}</b> <span class="team-tag">${esc(r.name)}</span></td>
-        <td>${r.opp ? `${r.away ? "@" : "vs "}${esc(r.opp)}<span class="kick">${esc(kickLabel(r.kick))}</span>` : `<span class="badge">BYE</span>`}</td>
+      <tbody>${rows.map(r => `<tr><td class="sticky l"><span class="team-cell">${teamLogo(r.abbr)}<span><b>${esc(r.abbr)}</b> <span class="team-tag">${esc(r.name)}</span></span></span></td>
+        <td>${r.opp ? `<span class="opp-cell">${teamLogo(r.opp, "sm")}<span>${r.away ? "@" : "vs "}${esc(r.opp)}<span class="kick">${esc(kickLabel(r.kick))}</span></span></span>` : `<span class="badge">BYE</span>`}</td>
         ${cols.map(c => cell(c, r[c.key])).join("")}</tr>`).join("")}</tbody>
     </table></div>
     <div class="notes">

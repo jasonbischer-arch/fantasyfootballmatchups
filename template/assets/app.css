@@ -244,6 +244,10 @@ td.bar-cell span { position: relative; }
 .tlogo img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: var(--surface); }
 .game-row { grid-template-columns: 26px 40px minmax(0, 1fr) 42px; }
 .tlogo.sm { width: 18px; height: 18px; font-size: 7px; }
+.tlogo.xs { width: 20px; height: 20px; font-size: 7px; background: rgb(255 255 255 / .55); }
+.team-cell { display: inline-flex; align-items: center; gap: 10px; }
+.wk-cell { display: inline-flex; align-items: center; gap: 5px; }
+.pline { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 .chart-player { display: flex; align-items: center; gap: 10px; }
 .chart-player .faces { display: flex; flex: none; }
 .chart-player .faces .avatar { width: 32px; height: 32px; border: 2px solid var(--surface); box-sizing: content-box; }
