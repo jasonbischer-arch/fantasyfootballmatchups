@@ -1,0 +1,48 @@
+name: Update matchup charts
+
+on:
+  schedule:
+    # Every day at 11:00 UTC (6-7am US Eastern). Stats land after Monday night,
+    # and daily runs keep depth charts (injuries, starters) current.
+    - cron: "0 11 * * *"
+  workflow_dispatch:
+    inputs:
+      week:
+        description: "Force a week number (leave blank for the upcoming week)"
+        required: false
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Build charts
+        run: python build.py ${{ github.event.inputs.week && format('--week {0}', github.event.inputs.week) || '' }}
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
