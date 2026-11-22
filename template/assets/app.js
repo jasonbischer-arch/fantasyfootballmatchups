@@ -315,8 +315,8 @@ function renderHome() {
     return `<article class="panel mcard">
       <div class="mcard-head"><h3>${pos}</h3><a href="#${pos.toLowerCase()}" class="muted" style="font-size:13px">Full chart →</a></div>
       <ol>${rows.map(r => `<li>${rankChip(r.def.rank[f], `${r.opp} rank vs ${pos}`)}
-        <span class="who">${namesHtml(r)}<small>${r.away ? "@" : "vs "}${esc(r.opp)} · ${f1(r.def.fppg[f])} pts allowed/g</small></span>
-        <span class="muted" style="font-size:12px">${esc(kickLabel(r.kick))}</span></li>`).join("")}</ol>
+        <span class="faces">${facesHtml(r, 2)}</span>
+        <span class="who">${namesHtml(r)}<small class="opp-line">${r.away ? "@" : "vs"} ${teamLogo(r.opp, "sm")}<b>${esc(r.opp)}</b> · ${f1(r.def.fppg[f])} allowed</small></span></li>`).join("")}</ol>
     </article>`;
   }).join("");
 
@@ -401,12 +401,15 @@ function renderHome() {
 }
 
 // Player cell for the matchup charts: stacked headshots, names, team logo.
-function chartPlayerCell(r) {
+function facesHtml(r, max = 9) {
   const ids = r.ids || [];
-  const faces = r.players.map((n, i) => {
+  return r.players.slice(0, max).map((n, i) => {
     const p = ids[i] && byId.get(ids[i]);
     return p ? avatar(p) : `<span class="avatar" aria-hidden="true">${esc(initials(n.replace(".", "")))}</span>`;
   }).join("");
+}
+function chartPlayerCell(r) {
+  const faces = facesHtml(r);
   return `<div class="chart-player"><span class="faces">${faces}</span>
     <span class="meta"><span class="names">${namesHtml(r)}</span><small class="team-line">${teamLogo(r.team, "sm")}${esc(r.team)}</small></span></div>`;
 }
