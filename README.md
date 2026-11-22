@@ -16,9 +16,41 @@ the same scale used across the site.
 | **My Team** | Enter your roster (saved in your browser) and get the best lineup for the week. Supports 3 WR, 2 flex and superflex. |
 | **Players** | Snap %, target share, air yards share, WOPR, rush share, red-zone opportunities, per-game volume, and next opponent for every fantasy-relevant player. Click anyone for a game log and chart. |
 | **Schedule** | Rest-of-season strength of schedule by position: each week's opponent colored by how much it allows, with next-4, rest-of-season and Weeks 15–17 (fantasy playoffs) averages. |
+| **Pro** ($10/month) | Mattress Pro command center: rankings with projections, floor/ceiling, tiers, A–F grades, boom/bust rates, matchup, team total, weather, usage and trend; one-click player reports; safe / balanced / upside modes; my-roster filter; waiver targets, buy-low and sell-high signals. |
 | **Teams** | Projected points, spread, total, points scored/allowed, plays per game, pass rate, neutral-situation pass rate, pass rate over expected, red-zone plays. |
 
 Scoring format (PPR / Half PPR / Standard) switches everywhere from the header.
+
+## Mattress Pro (paywall)
+
+Pro is unlocked with an **access code**. Payments go through a **Stripe Payment Link**, so no server is needed.
+Settings live in `pro.json`:
+
+```json
+{ "price": 10, "checkoutUrl": "https://buy.stripe.com/...", "codeHashes": ["<sha256 of the code>"] }
+```
+
+Setup:
+
+1. In Stripe, create a product "Mattress Pro" with a **$10/month recurring** price, then **Create payment link**.
+2. In the payment link's **After payment** settings, choose **Show confirmation page** and add a custom message,
+   for example: `Your Mattress Pro access code is SLEEP-XXXXXX. Enter it on the Pro tab of the site.`
+3. Paste the payment link URL into `pro.json` as `checkoutUrl` and push. The Subscribe button goes live.
+4. Turn on Stripe's **customer portal** so subscribers can cancel themselves.
+
+Changing the code (do this monthly, or whenever a code leaks):
+
+```bash
+python tools/make_code_hash.py
+```
+
+Add the printed hash to `codeHashes` (keep the old one for a few days so current members aren't locked out,
+then remove it), update the Stripe confirmation message, and email the new code to active subscribers.
+Never commit the code itself, only its hash.
+
+**Limits:** this is a static site, so the gate stops casual visitors, not determined ones: all data is in
+`data.json`, and a code can be shared. For strict protection, move Pro data behind a small server
+(for example a Cloudflare Worker) that checks the subscriber's Stripe status before serving it.
 
 ## Data
 
@@ -47,6 +79,7 @@ rather than double-clicking the file.
 ## Files
 
 - `build.py` downloads the data and writes `site/` (`index.html`, `data.json`, `assets/`, `.xlsx` files).
+- `pro.json` holds the Pro price, Stripe link and access-code hashes; `tools/make_code_hash.py` makes new codes.
 - `template/index.html` is the page shell; `template/assets/app.js` renders every page; `app.css` is the design;
   `logo.svg` and `mark.svg` are the logo and icon.
 

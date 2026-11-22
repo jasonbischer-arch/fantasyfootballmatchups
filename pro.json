@@ -1,0 +1,6 @@
+{
+  "_help": "Mattress Pro paywall settings. See README 'Mattress Pro' for how to set these up.",
+  "price": 10,
+  "checkoutUrl": "",
+  "codeHashes": ["e71be8d3d8fbdfd0e55595ca914e1c71df09364f7606a666c4fd37f7ae907275"]
+}

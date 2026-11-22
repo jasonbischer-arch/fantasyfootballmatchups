@@ -6,7 +6,7 @@ const POS = ["QB", "RB", "WR", "TE"];
 const POS_NAME = { QB: "quarterbacks", RB: "running backs", WR: "wide receivers", TE: "tight ends" };
 const RECENT = 3;
 const PLAYOFF_WEEKS = new Set([15, 16, 17]);
-const PAGES = ["home", "matchups", "start-sit", "my-team", "players", "schedule", "teams"];
+const PAGES = ["home", "matchups", "start-sit", "my-team", "players", "schedule", "teams", "pro"];
 
 let D = null;                         // data.json
 const byId = new Map();
@@ -166,6 +166,7 @@ function boot() {
   page.addEventListener("click", onClick);
   page.addEventListener("input", onInput);
   page.addEventListener("change", onInput);
+  page.addEventListener("submit", e => e.preventDefault());
   $("#playerDialog").addEventListener("click", e => {
     if (e.target.id === "playerDialog") return closePlayer();
     onClick(e);
@@ -191,7 +192,7 @@ function route(scroll) {
 function render() {
   document.querySelectorAll("#fmtSeg button").forEach(b => b.setAttribute("aria-pressed", b.dataset.fmt === state.fmt));
   const fn = { home: renderHome, matchups: renderMatchups, "start-sit": renderStartSit, "my-team": renderMyTeam,
-    players: renderPlayers, schedule: renderSchedule, teams: renderTeams }[state.page];
+    players: renderPlayers, schedule: renderSchedule, teams: renderTeams, pro: renderPro }[state.page];
   const active = document.activeElement && document.activeElement.id;
   const caret = active && document.activeElement.selectionStart;
   fn();
@@ -236,6 +237,10 @@ function onClick(e) {
 // Re-render after a short pause in typing rather than on every keystroke.
 let renderTimer = 0;
 function renderSoon() { clearTimeout(renderTimer); renderTimer = setTimeout(render, 160); }
+document.addEventListener("keydown", e => {
+  if (e.key === "Enter" && e.target.matches && e.target.matches(".list-row.sig")) e.target.click();
+  if (e.key === "Enter" && e.target.id === "proCode") { e.preventDefault(); ACTIONS.prounlock(); }
+});
 function onInput(e) {
   const t = e.target;
   if (t.id === "mSearch") { state.q = t.value; return renderSoon(); }
@@ -250,6 +255,9 @@ function onInput(e) {
   }
   if (t.id === "mtAdd" && e.type === "change") { const p = byLabel.get(t.value.trim().toLowerCase()); if (p) { addToRoster(p); } return; }
   if (t.id === "mtSlots") { store.set("tsm-slots", t.value); return render(); }
+  if (t.id === "proSearch") { pro.q = t.value; pro.limit = 60; return renderSoon(); }
+  if (t.id === "proMine") { pro.mine = t.checked; return render(); }
+  if (t.id === "proCode" && e.type === "input") { const m = $("#proMsg"); if (m) m.textContent = ""; }
 }
 const ACTIONS = {
   pos(el) { location.hash = el.dataset.v.toLowerCase(); },
@@ -275,6 +283,13 @@ const ACTIONS = {
   clearroster() { store.set("tsm-roster", []); render(); },
   keepexample() { store.set("tsm-roster", exampleRoster().map(p => p.id)); render(); },
   addroster() { const el = $("#mtAdd"); const p = el && byLabel.get(el.value.trim().toLowerCase()); if (p) addToRoster(p); },
+  propos(el) { pro.pos = el.dataset.v; pro.limit = 60; render(); },
+  promode(el) { pro.mode = el.dataset.v; render(); },
+  prosel(el) { pro.sel = el.dataset.id; renderProReport(); const r = $("#proReport"); if (r && window.innerWidth < 1000) r.scrollIntoView({ behavior: "smooth", block: "start" }); },
+  promore() { pro.limit += 60; render(); },
+  prounlock() { unlockPro(); },
+  prolock() { store.set("tsm-pro", null); proState.ok = false; render(); },
+  proopen(el) { openPlayer(el.dataset.id); },
 };
 
 // ------------------------------------------------------------------ HOME
@@ -988,5 +1003,318 @@ function fillPlayer(p) {
       <button type="button" class="btn" data-action="roster" data-id="${esc(p.id)}">${onRoster ? "Remove from My Team" : "Add to My Team"}</button>
     </div>
     <p class="muted" style="margin:0;font-size:12px">Season: ${f1(pts(p.ppg, f))} ${esc(fmtLabel())} pts/g over ${p.g} games, ${f1(pts(p.l3, f))} over the last ${Math.min(RECENT, p.g)}.</p>`;
+}
+
+// ================================================================== MATTRESS PRO
+// Premium command center. Access: Stripe Payment Link + access code (hash checked here).
+const PRO = Object.assign({ price: 10, checkoutUrl: "", codeHashes: [] }, window.TSM_PRO || {});
+const pro = { pos: "ALL", mode: "balanced", q: "", mine: false, sel: null, limit: 60 };
+const proState = { ok: false, checked: false };
+const GRADE_CUTS = { QB: [6, 12, 18, 24], RB: [12, 24, 36, 48], WR: [12, 24, 36, 48], TE: [6, 12, 18, 24] };
+const STARTERS = { QB: 12, RB: 24, WR: 24, TE: 12 };
+
+async function sha256(text) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+async function checkPro() {
+  const saved = store.get("tsm-pro", null);
+  proState.ok = !!(saved && saved.h && PRO.codeHashes.includes(saved.h));
+  proState.checked = true;
+}
+async function unlockPro() {
+  const el = $("#proCode"), msg = $("#proMsg");
+  const code = (el && el.value || "").trim().toUpperCase();
+  if (!code) { if (msg) msg.textContent = "Enter the access code from your Stripe receipt."; return; }
+  let h = "";
+  try { h = await sha256(code); } catch (e) { if (msg) msg.textContent = "This browser can't check codes. Try another browser."; return; }
+  if (PRO.codeHashes.includes(h)) { store.set("tsm-pro", { h, at: Date.now() }); proState.ok = true; render(); window.scrollTo(0, 0); }
+  else if (msg) msg.textContent = "That code didn't work. Check for typos, or use this month's code from your receipt email.";
+}
+
+function percentile(arr, q) {
+  if (!arr.length) return null;
+  const s = [...arr].sort((a, b) => a - b), i = (s.length - 1) * q, lo = Math.floor(i), hi = Math.ceil(i);
+  return s[lo] + (s[hi] - s[lo]) * (i - lo);
+}
+// Per-format model: boom/bust lines per position, then every player's numbers.
+const proCache = new Map();
+function proModel(f = state.fmt) {
+  if (proCache.has(f)) return proCache.get(f);
+  const idx = Object.fromEntries(D.logKeys.map((k, i) => [k, i]));
+  const gamePts = g => f === "ppr" ? g[idx.pts] : f === "std" ? g[idx.ptsStd] : (g[idx.pts] + g[idx.ptsStd]) / 2;
+  // Boom = 80th percentile of weekly scores by "starter-level" players at the position; bust = 25th.
+  const lines = {};
+  for (const pos of POS) {
+    const starters = D.players.filter(p => p.pos === pos).sort((a, b) => pts(b.ppg, f) - pts(a.ppg, f)).slice(0, STARTERS[pos]);
+    const all = starters.flatMap(p => p.log.map(gamePts));
+    lines[pos] = { boom: percentile(all, 0.8), bust: percentile(all, 0.25), start: percentile(all, 0.5) };
+  }
+  const rows = D.players.map(p => {
+    const pr = project(p, f), weekly = p.log.map(gamePts), L = lines[p.pos];
+    const factor = p.bye ? 1 : pr.factor;
+    const enough = weekly.length >= 3;
+    const floor = injOut(p) || p.bye ? 0 : enough ? Math.min(pr.proj, percentile(weekly, 0.2) * factor) : pr.proj * 0.6;
+    const ceil = injOut(p) || p.bye ? 0 : enough ? Math.max(pr.proj, percentile(weekly, 0.85) * factor) : pr.proj * 1.45;
+    const n = weekly.length || 1;
+    const tdPts = p.log.reduce((s, g) => s + g[idx.td] * 6 + g[idx.ptd] * 4, 0);
+    const totPts = weekly.reduce((a, b) => a + b, 0);
+    const oppShare = p.pos === "RB" ? (p.season.rushShare ?? 0) : p.pos === "QB" ? null : p.season.tgtShare;
+    const oppShareL3 = p.pos === "RB" ? (p.recent.rushShare ?? 0) : p.pos === "QB" ? null : p.recent.tgtShare;
+    return {
+      p, proj: pr.proj, floor, ceil, factor,
+      boom: weekly.filter(v => v >= L.boom).length / n, bust: weekly.filter(v => v <= L.bust).length / n,
+      startable: weekly.filter(v => v >= L.start).length / n,
+      tdShare: totPts > 0 ? tdPts / totPts : 0, oppShare, oppShareL3,
+      season: pts(p.ppg, f), recent: pts(p.l3, f), weekly,
+    };
+  });
+  // Positional rank, grade and tier among players who can play this week.
+  for (const pos of POS) {
+    const list = rows.filter(r => r.p.pos === pos && !unavailable(r.p)).sort((a, b) => b.proj - a.proj);
+    let tier = 1;
+    list.forEach((r, i) => {
+      if (i > 0) { const gap = list[i - 1].proj - r.proj; if (gap >= Math.max(1.1, list[i - 1].proj * 0.07)) tier++; }
+      r.posRank = i + 1; r.tier = tier;
+      const c = GRADE_CUTS[pos];
+      r.grade = i < c[0] ? "A" : i < c[1] ? "B" : i < c[2] ? "C" : i < c[3] ? "D" : "F";
+    });
+  }
+  const out = { rows, byId: new Map(rows.map(r => [r.p.id, r])), lines };
+  proCache.set(f, out);
+  return out;
+}
+const GRADE_COLOR = { A: GREEN, B: [169, 202, 122], C: YELLOW, D: ORANGE, F: RED };
+const gradeChip = g => g ? `<span class="grade" style="background:rgb(${GRADE_COLOR[g].join(",")})">${g}</span>` : `<span class="badge">—</span>`;
+function verdictText(r) {
+  const p = r.p;
+  if (p.bye) return ["Bye week", "bad"];
+  if (injOut(p)) return ["Ruled out", "bad"];
+  if (p.inj && /doubtful/i.test(p.inj.status)) return ["Doubtful, have a backup ready", "bad"];
+  const q = p.inj ? " (check his status)" : "";
+  if (r.grade === "A") return ["Must start" + q, "good"];
+  if (r.grade === "B") return ["Confident starter" + q, "good"];
+  if (r.grade === "C") return [(p.pos === "QB" || p.pos === "TE" ? "Streaming option" : "Flex play") + q, "mid"];
+  if (r.grade === "D") return ["Risky, deep leagues only" + q, "mid"];
+  return ["Bench", "bad"];
+}
+function nextOpps(p, n = 4) {
+  const t = D.teams[p.team]; if (!t) return [];
+  return t.sched.slice(0, n).map(([w, o, a]) => ({ w, o, a, rank: D.defenses[p.pos][o].rank[state.fmt] }));
+}
+function rangeBar(r, max) {
+  const L = v => Math.max(0, Math.min(100, v / max * 100));
+  return `<span class="range" title="Floor ${f1(r.floor)} · projection ${f1(r.proj)} · ceiling ${f1(r.ceil)}">
+    <span class="range-band" style="left:${L(r.floor)}%;width:${Math.max(2, L(r.ceil) - L(r.floor))}%"></span>
+    <span class="range-mid" style="left:${L(r.proj)}%"></span></span>`;
+}
+function trendArrow(r) {
+  const d = r.recent - r.season;
+  if (r.p.g < 4 || Math.abs(d) < 2) return `<span class="muted">—</span>`;
+  return d > 0 ? `<span class="trend-up">▲ ${f1(d)}</span>` : `<span class="trend-down">▼ ${f1(-d)}</span>`;
+}
+
+function renderPro() {
+  if (!proState.checked) { checkPro().then(render); return; }
+  return proState.ok ? renderProTool() : renderProLocked();
+}
+
+function renderProLocked() {
+  const m = proModel();
+  const teaser = m.rows.filter(r => !unavailable(r.p)).sort((a, b) => b.proj - a.proj).slice(0, 8);
+  const can = !!PRO.checkoutUrl;
+  const features = [
+    ["Weekly rankings with projections", "Every player ranked by matchup-adjusted projection, with tiers and an A–F start grade."],
+    ["Floor and ceiling", "Each player's realistic range this week, plus how often he booms and busts."],
+    ["One-click player reports", "Verdict, matchup, weather, usage trends and the next four opponents in a single panel."],
+    ["Safe, balanced or upside", "Re-rank for a must-win week or a long shot, and filter to just your roster."],
+    ["Waiver targets", "Players whose snaps and targets are climbing, with soft schedules ahead."],
+    ["Buy-low and sell-high alerts", "Trade signals from usage versus production and touchdown luck."],
+  ];
+  $("#page").innerHTML = `
+    <section class="pro-hero">
+      <div class="pro-hero-main">
+        <div class="eyebrow">Mattress Pro · $${PRO.price}/month</div>
+        <h1>Every edge, one screen</h1>
+        <p>Rankings, projections, floors and ceilings, matchups, weather, usage and trade signals, all in one place for Week ${D.week}. Updated every Wednesday and Sunday morning.</p>
+        <div class="pro-cta">
+          ${can ? `<a class="btn pro-btn" href="${esc(PRO.checkoutUrl)}" target="_blank" rel="noopener">Subscribe for $${PRO.price}/month</a>` : `<span class="btn pro-btn disabled" aria-disabled="true">Subscriptions open soon</span>`}
+          <span class="muted-inv">Cancel anytime. Secure checkout by Stripe.</span>
+        </div>
+      </div>
+      <form class="pro-unlock panel" id="proForm">
+        <h3>Already a member?</h3>
+        <label for="proCode" class="muted" style="font-size:13px">Enter the access code from your receipt</label>
+        <div class="pro-code-row"><input id="proCode" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="SLEEP-XXXXXX"><button type="submit" class="btn primary" data-action="prounlock">Unlock</button></div>
+        <p id="proMsg" class="pro-msg" role="status"></p>
+      </form>
+    </section>
+    <section class="grid-3 pro-features">${features.map(([h, t]) => `<div class="panel panel-pad"><h3>${h}</h3><p class="muted" style="margin:6px 0 0">${t}</p></div>`).join("")}</section>
+    <section class="section">
+      <div class="section-head"><h2>Inside Pro this week</h2><span class="muted" style="font-size:13px">Preview</span></div>
+      <div class="pro-teaser" aria-hidden="true">
+        <div class="table-box"><table><thead><tr><th>Rk</th><th class="l">Player</th><th>Grade</th><th>Proj</th><th>Floor – Ceiling</th><th>Boom %</th><th>Matchup</th></tr></thead>
+        <tbody>${teaser.map((r, i) => `<tr><td>${i + 1}</td><td class="l"><div class="pcell">${avatar(r.p)}<span class="meta"><b>${esc(r.p.name)}</b><small>${r.p.pos} · ${esc(r.p.team)}</small></span></div></td>
+          <td>${gradeChip(r.grade)}</td><td><b>${f1(r.proj)}</b></td><td>${f1(r.floor)} – ${f1(r.ceil)}</td><td>${pct(r.boom)}</td><td>${rankChip(defFor(r.p).rank[state.fmt])}</td></tr>`).join("")}</tbody></table></div>
+        <div class="pro-teaser-veil"><span>Subscribe to see the full rankings</span></div>
+      </div>
+    </section>`;
+}
+
+function proFilter(rows) {
+  const q = pro.q.trim().toLowerCase();
+  const mine = pro.mine ? new Set(roster().example ? [] : roster().ids) : null;
+  return rows.filter(r => {
+    const p = r.p;
+    if (pro.pos === "FLEX" ? !["RB", "WR", "TE"].includes(p.pos) : pro.pos !== "ALL" && p.pos !== pro.pos) return false;
+    if (mine && !mine.has(p.id)) return false;
+    if (q && !p.name.toLowerCase().includes(q) && p.team.toLowerCase() !== q) return false;
+    return true;
+  });
+}
+function proScore(r) { return pro.mode === "safe" ? r.floor : pro.mode === "upside" ? r.ceil : r.proj; }
+
+function renderProTool() {
+  const m = proModel(), f = state.fmt;
+  const pool = proFilter(m.rows).filter(r => !r.p.bye || pro.mine);
+  pool.sort((a, b) => (unavailable(a.p) ? 1 : 0) - (unavailable(b.p) ? 1 : 0) || proScore(b) - proScore(a));
+  const shown = pool.slice(0, pro.limit);
+  if (!pro.sel || !m.byId.has(pro.sel)) pro.sel = shown[0] ? shown[0].p.id : null;
+  const max = Math.max(10, ...shown.map(r => r.ceil));
+  const rosterIds = new Set(roster().example ? [] : roster().ids);
+  const imps = stops(Object.values(D.teams).map(t => t.implied));
+
+  const body = shown.map((r, i) => {
+    const p = r.p, d = defFor(p), t = teamOf(p);
+    return `<tr class="clickable${p.id === pro.sel ? " sel" : ""}" data-action="prosel" data-id="${esc(p.id)}">
+      <td class="rk">${i + 1}</td>
+      <td class="sticky l"><div class="pcell">${avatar(p)}<span class="meta"><span><b>${esc(p.name)}</b> ${injBadge(p)}${rosterIds.has(p.id) ? ` <span class="badge mine">Mine</span>` : ""}</span>
+        <small class="pline">${p.pos}${r.posRank ? r.posRank : ""} · ${teamLogo(p.team, "sm")}${esc(p.team)}</small></span></div></td>
+      <td>${unavailable(p) ? `<span class="badge">—</span>` : gradeChip(r.grade)}</td>
+      <td class="muted">${r.tier ? "T" + r.tier : "—"}</td>
+      <td class="proj-cell">${unavailable(p) ? "—" : f1(r.proj)}</td>
+      <td class="range-cell">${unavailable(p) ? "" : `${rangeBar(r, max)}<span class="range-nums">${f1(r.floor)} – ${f1(r.ceil)}</span>`}</td>
+      <td>${pct(r.boom)}<span class="kick">bust ${pct(r.bust)}</span></td>
+      <td>${d ? `<span class="opp-cell">${teamLogo(p.opp, "sm")}${rankChip(d.rank[f], `${p.opp} rank vs ${p.pos}`)}</span>` : `<span class="badge">BYE</span>`}</td>
+      <td class="${t.implied != null && !p.bye ? "scale" : ""}" style="${t.implied != null && !p.bye ? `background:${scaleColor(t.implied, ...imps, YELLOW)}` : ""}">${t.implied != null && !p.bye ? f1(t.implied) : "—"}</td>
+      ${p.bye ? "<td>—</td>" : wxCell(t.wx).replace('<span class="kick">', '<span class="kick" hidden>')}
+      <td>${pct(p.season.snap)}</td>
+      <td>${r.oppShare != null ? pct(r.oppShare) : "—"}<span class="kick">${p.pos === "RB" ? "rush" : p.pos === "QB" ? "" : "targets"}</span></td>
+      <td>${trendArrow(r)}</td>
+    </tr>`;
+  }).join("");
+
+  $("#page").innerHTML = `
+    <div class="pro-head">
+      <div class="page-head"><div class="eyebrow pro-eyebrow">Mattress Pro · Week ${D.week} · ${esc(fmtLabel())}</div><h1>Command Center</h1>
+        <p class="lede">Click any player for the full report. ${esc(updatedText())}</p></div>
+      <button type="button" class="btn small" data-action="prolock" title="Sign out of Pro on this device">Sign out</button>
+    </div>
+    <div class="controls">
+      <div class="seg" role="group" aria-label="Position">${["ALL", "QB", "RB", "WR", "TE", "FLEX"].map(v => `<button type="button" data-action="propos" data-v="${v}" aria-pressed="${pro.pos === v}">${v === "ALL" ? "All" : v}</button>`).join("")}</div>
+      <div class="seg" role="group" aria-label="Ranking mode">${[["safe", "Safe"], ["balanced", "Balanced"], ["upside", "Upside"]].map(([k, l]) => `<button type="button" data-action="promode" data-v="${k}" aria-pressed="${pro.mode === k}" title="${k === "safe" ? "Rank by floor" : k === "upside" ? "Rank by ceiling" : "Rank by projection"}">${l}</button>`).join("")}</div>
+      <label class="check"><input id="proMine" type="checkbox" ${pro.mine ? "checked" : ""}> My roster only</label>
+      <input id="proSearch" type="search" placeholder="Find a player or team" aria-label="Find a player or team" value="${esc(pro.q)}">
+    </div>
+    ${pro.mine && !rosterIds.size ? `<div class="panel panel-pad">Your roster is empty. Add players on <a href="#my-team">My Team</a> to filter to them here.</div>` : ""}
+    <div class="pro-grid">
+      <div class="pro-main">
+        <div class="table-box"><table class="pro-table">
+          <thead><tr><th>Rk</th><th class="sticky l">Player</th><th>Grade</th><th>Tier</th><th>Proj</th><th>Floor – Ceiling</th><th>Boom</th><th>Matchup</th><th title="Team projected points from the betting line">Team Tot</th><th>Weather</th><th>Snap</th><th>Share</th><th>Trend</th></tr></thead>
+          <tbody>${body || `<tr><td colspan="13" class="empty">No players match.</td></tr>`}</tbody>
+        </table></div>
+        ${pool.length > shown.length ? `<div class="more">Showing ${shown.length} of ${pool.length} <button type="button" class="btn small" data-action="promore">Show 60 more</button></div>` : ""}
+      </div>
+      <aside class="pro-side" id="proReport"></aside>
+    </div>
+    <section class="grid-3" style="align-items:start">${proSignals(m)}</section>
+    <div class="notes">
+      <p><strong>Projection</strong> blends season and last-3 scoring, adjusted for this week's opponent. <strong>Floor / ceiling</strong> are a bad and a great week (his 20th and 85th percentile games, matchup-adjusted). <strong>Boom / bust</strong> are how often he has cleared a top-tier week or fallen below a startable one at his position (${POS.map(pos => `${pos} ${f1(m.lines[pos].boom)} / ${f1(m.lines[pos].bust)}`).join(", ")} ${esc(fmtLabel())} pts).</p>
+      <p><strong>Grade</strong> is his projected positional rank: A = top ${GRADE_CUTS.RB[0]} RB/WR (top ${GRADE_CUTS.QB[0]} QB/TE), B, C, D in steps of the same size, F below that. <strong>Tiers</strong> break where projections jump. <strong>Share</strong> is target share for receivers, rush share for backs.</p>
+    </div>`;
+  renderProReport();
+}
+
+function proSignals(m) {
+  const playable = m.rows.filter(r => !unavailable(r.p) && r.p.g >= 4 && r.p.pos !== "QB");
+  const sosAvg = p => { const o = nextOpps(p); return o.length ? o.reduce((s, x) => s + x.rank, 0) / o.length : 16; };
+  const waiver = playable.filter(r => r.p.ppg.ppr < 11).map(r => {
+    const p = r.p, dSnap = (p.recent.snap ?? 0) - (p.season.snap ?? 0), dShare = (r.oppShareL3 ?? 0) - (r.oppShare ?? 0);
+    return { r, score: dSnap + dShare * 1.5 + (sosAvg(p) - 16) / 100, dSnap, dShare };
+  }).filter(x => x.dSnap >= 0.06 || x.dShare >= 0.04).sort((a, b) => b.score - a.score).slice(0, 6)
+    .map(x => sigRow(x.r, `${x.dShare >= 0.04 ? `${x.r.p.pos === "RB" ? "Rush" : "Target"} share ${pct(x.r.oppShare)} → ${pct(x.r.oppShareL3)}` : `Snaps ${pct(x.r.p.season.snap)} → ${pct(x.r.p.recent.snap)}`} · next 4 avg rank ${f1(sosAvg(x.r.p))}`));
+  const buy = playable.filter(r => (r.p.pos === "RB" ? (r.p.recent.rushShare ?? 0) >= 0.5 : (r.p.recent.tgtShare ?? 0) >= 0.22) && r.recent < r.season * 0.85 && r.season >= 8)
+    .sort((a, b) => (a.recent / a.season) - (b.recent / b.season)).slice(0, 6)
+    .map(r => sigRow(r, `Still getting ${pct(r.oppShareL3)} of the ${r.p.pos === "RB" ? "carries" : "targets"}, but scoring ${f1(r.recent)} lately vs ${f1(r.season)} on the season`));
+  const sell = playable.filter(r => r.season >= 10 && (r.tdShare >= 0.38 || (r.recent > r.season * 1.3 && (r.oppShareL3 ?? 0) <= (r.oppShare ?? 0))))
+    .sort((a, b) => b.tdShare - a.tdShare).slice(0, 6)
+    .map(r => sigRow(r, r.tdShare >= 0.38 ? `${pct(r.tdShare)} of his points come from touchdowns, which rarely last` : `Hot streak (${f1(r.recent)} last 3) without more ${r.p.pos === "RB" ? "carries" : "targets"}`));
+  const col = (title, dot, sub, items, empty) => `<div class="section"><div class="section-head"><div class="hc-head"><span class="hc-dot" style="background:${dot}"></span><h2>${title}</h2></div><span class="muted" style="font-size:13px">${sub}</span></div>
+    <div class="panel list">${items.length ? items.join("") : `<p class="empty">${empty}</p>`}</div></div>`;
+  return col("Waiver targets", "var(--accent)", "Rising usage, under 11 pts/g", waiver, "No clear risers this week.")
+    + col("Buy low", "var(--s-green)", "Usage holding, points down", buy, "No buy-low spots right now.")
+    + col("Sell high", "var(--s-red)", "Production running ahead of usage", sell, "No sell-high spots right now.");
+}
+function sigRow(r, why) {
+  return `<div class="list-row sig" data-action="prosel" data-id="${esc(r.p.id)}" role="button" tabindex="0">
+    <div class="pcell">${avatar(r.p)}<span class="meta"><b>${esc(r.p.name)}</b><small>${r.p.pos} · ${esc(r.p.team)} · ${esc(why)}</small></span></div>
+    <div class="right">${f1(r.season)}<small>pts/g</small></div></div>`;
+}
+
+function renderProReport() {
+  const el = $("#proReport"); if (!el) return;
+  document.querySelectorAll(".pro-table tbody tr").forEach(tr => tr.classList.toggle("sel", tr.dataset.id === pro.sel));
+  const m = proModel(), r = m.byId.get(pro.sel), f = state.fmt;
+  if (!r) { el.innerHTML = `<div class="panel panel-pad muted">Pick a player to see his report.</div>`; return; }
+  const p = r.p, d = defFor(p), t = teamOf(p), [vtext, vcls] = verdictText(r);
+  const opps = nextOpps(p);
+  const max = Math.max(10, r.ceil * 1.1);
+  const bars = r.weekly.slice(-8);
+  const bmax = Math.max(10, ...bars);
+  const spark = `<svg viewBox="0 0 160 40" class="spark" aria-label="Last ${bars.length} games">${bars.map((v, i) =>
+    `<rect x="${i * 20 + 2}" y="${38 - v / bmax * 34}" width="14" height="${Math.max(1, v / bmax * 34)}" rx="2" fill="${v >= m.lines[p.pos].boom ? "#57bb8a" : v <= m.lines[p.pos].bust ? "#e67c73" : "var(--bar)"}"><title>${f1(v)}</title></rect>`).join("")}</svg>`;
+  const useRow = (label, key, fmt) => p.season[key] == null || (!p.season[key] && !p.recent[key]) ? "" :
+    `<div class="kv"><span>${label}</span><b>${fmt(p.season[key])}</b><span class="${(p.recent[key] ?? 0) > (p.season[key] ?? 0) * 1.08 ? "trend-up" : (p.recent[key] ?? 0) < (p.season[key] ?? 0) * 0.92 ? "trend-down" : "muted"}">${fmt(p.recent[key])}</span></div>`;
+  el.innerHTML = `<div class="panel report">
+    <div class="report-head">
+      <span class="avatar big">${esc(initials(p.name))}${p.img ? `<img src="${esc(p.img)}" alt="" referrerpolicy="no-referrer">` : ""}</span>
+      <div><h2>${esc(p.name)}</h2><div class="pline muted">${p.pos}${r.posRank ? r.posRank : ""} · ${teamLogo(p.team, "sm")}${esc((D.teams[p.team] || {}).name || p.team)} ${injBadge(p)}</div></div>
+      ${unavailable(p) ? "" : gradeChip(r.grade)}
+    </div>
+    <div class="verdict-pill ${vcls}">${esc(vtext)}${r.tier ? ` · Tier ${r.tier}` : ""}</div>
+    <div class="report-proj">
+      <div><span class="k">Projection</span><span class="v">${unavailable(p) ? "—" : f1(r.proj)}</span></div>
+      <div><span class="k">Floor</span><span class="v sm">${f1(r.floor)}</span></div>
+      <div><span class="k">Ceiling</span><span class="v sm">${f1(r.ceil)}</span></div>
+    </div>
+    ${unavailable(p) ? "" : `<div class="range lg">${rangeBar(r, max).replace(/^<span class="range"[^>]*>|<\/span>$/g, "")}</div>`}
+    <div class="report-split">
+      <div><span class="k">Boom</span><b>${pct(r.boom)}</b></div><div><span class="k">Startable</span><b>${pct(r.startable)}</b></div><div><span class="k">Bust</span><b>${pct(r.bust)}</b></div>
+    </div>
+    <h3>Matchup</h3>
+    ${d ? `<div class="report-match">
+      <span class="opp-cell">${teamLogo(p.opp)}<span><b>${p.away ? "@" : "vs"} ${esc(D.teams[p.opp].name)}</b><span class="kick">${esc(kickLabel(p.kick, true))}</span></span></span>
+      <div class="kv"><span>Rank vs ${p.pos}s</span>${rankChip(d.rank[f])}<span class="muted">${f1(d.fppg[f])} allowed/g</span></div>
+      <div class="kv"><span>Team projected</span><b>${t.implied != null ? f1(t.implied) : "—"}</b><span class="muted">${t.total != null ? `O/U ${t.total}${t.spread != null ? ` · ${t.spread > 0 ? "+" : ""}${t.spread}` : ""}` : ""}</span></div>
+      <div class="kv"><span>Weather</span>${t.wx ? (t.wx.indoor ? `<b>Indoors</b>` : `<span class="wx-in">${wxIcon(t.wx.cond)}<b>${t.wx.temp}°</b></span>`) : "<b>—</b>"}<span class="muted">${t.wx && !t.wx.indoor ? `${t.wx.wind} mph · ${t.wx.precip ?? 0}%` : ""}</span></div>
+      <div class="kv"><span>Matchup boost</span><b>${r.factor >= 1 ? "+" : "−"}${Math.abs((r.factor - 1) * 100).toFixed(0)}%</b><span></span></div>
+    </div>` : `<p class="muted">On bye in Week ${D.week}.</p>`}
+    <h3>Usage <span class="muted" style="font-size:12px;text-transform:none;letter-spacing:0">season → last 3</span></h3>
+    <div class="report-use">
+      ${useRow("Snap share", "snap", pct)}${p.pos !== "QB" ? useRow("Target share", "tgtShare", pct) + useRow("Air yards share", "airShare", pct) : ""}
+      ${useRow("Rush share", "rushShare", pct)}
+      <div class="kv"><span>Red-zone chances/g</span><b>${f1(p.season.rzTgt + p.season.rzCar)}</b><span class="muted">${f1(p.recent.rzTgt + p.recent.rzCar)}</span></div>
+      <div class="kv"><span>Points from TDs</span><b>${pct(r.tdShare)}</b><span class="muted">${r.tdShare >= 0.38 ? "TD-dependent" : ""}</span></div>
+    </div>
+    <h3>Recent games</h3>
+    <div class="report-spark">${spark}<span class="muted" style="font-size:12px">${f1(r.season)} season · ${f1(r.recent)} last 3<br><span style="color:#2f9e6b">■</span> boom <span style="color:#e67c73">■</span> bust</span></div>
+    <h3>Next ${opps.length} weeks</h3>
+    <div class="report-sched">${opps.map(o => `<span class="sched-chip" style="background:${rankColor(o.rank)}" title="Week ${o.w}: ${esc(D.teams[o.o].name)}, rank ${o.rank} vs ${p.pos}"><small>Wk ${o.w}</small><b>${o.a ? "@" : ""}${esc(o.o)}</b></span>`).join("") || `<span class="muted">Season complete.</span>`}</div>
+    <div class="pd-actions">
+      <button type="button" class="btn small" data-action="proopen" data-id="${esc(p.id)}">Game log</button>
+      <button type="button" class="btn small" data-action="compare" data-id="${esc(p.id)}">Compare</button>
+      <button type="button" class="btn small" data-action="roster" data-id="${esc(p.id)}">${roster().ids.includes(p.id) && !roster().example ? "On My Team ✓" : "Add to My Team"}</button>
+    </div>
+  </div>`;
 }
 })();
