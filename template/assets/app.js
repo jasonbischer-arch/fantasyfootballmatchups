@@ -451,12 +451,12 @@ function renderMatchups() {
   const cols = [
     { key: "player", label: pos, cls: "sticky l" },
     { key: "opp", label: "Opp" },
-    { key: "wx", label: "Weather" },
-    { key: "implied", label: "Team Tot" },
     { key: "rank", label: "Rank" },
     { key: "fppg", label: "FPPG" },
     { key: "pa", label: `PA Wk ${D.prevWeek}` },
     ...block.columns.map(c => ({ key: c.key, label: c.label, dp: c.dp, stat: true })),
+    { key: "wx", label: "Weather" },
+    { key: "implied", label: "Team Tot" },
   ];
   const val = (r, key) => {
     const d = r.def;
@@ -485,15 +485,15 @@ function renderMatchups() {
     return `<tr class="${hit(r) ? "" : "dim"}">
       <td class="sticky l">${chartPlayerCell(r)}</td>
       <td><span class="opp-cell">${teamLogo(r.opp)}<span><b>${r.away ? "@" : ""}${esc(r.opp)}</b><span class="kick">${esc(kickLabel(r.kick))}</span></span></span></td>
-      ${wxCell((D.teams[r.team] || {}).wx)}
-      <td class="${imp != null ? "scale" : ""}" style="${imp != null ? `background:${scaleColor(imp, ...st.implied, YELLOW)}` : ""}">${imp != null ? f1(imp) : "—"}</td>
       <td class="scale rank" style="background:${rankColor(d.rank[f])}">${d.rank[f]}</td>
       <td class="scale" style="background:${scaleColor(d.fppg[f], ...st.fppg)}">${f1(d.fppg[f])}</td>
       ${d.pa ? `<td class="scale pa" style="background:${scaleColor(d.pa.pts[f], ...st.pa)}">${f1(d.pa.pts[f])}<small>(${esc(d.pa.who)})</small></td>` : `<td>BYE</td>`}
       ${cols.filter(c => c.stat).map(c => `<td class="scale" style="background:${scaleColor(d.stats[c.key], ...st[c.key], YELLOW)}">${Number(d.stats[c.key]).toFixed(c.dp)}</td>`).join("")}
+      ${wxCell((D.teams[r.team] || {}).wx)}
+      <td class="${imp != null ? "scale" : ""}" style="${imp != null ? `background:${scaleColor(imp, ...st.implied, YELLOW)}` : ""}">${imp != null ? f1(imp) : "—"}</td>
     </tr>`;
   }).join("") + byes.map(r => `<tr class="bye ${hit(r) ? "" : "dim"}"><td class="sticky l" style="background:var(--bye)">${chartPlayerCell(r)}</td>
-      <td>BYE</td><td></td><td></td><td>BYE</td><td>BYE</td><td>BYE</td>${cols.filter(c => c.stat).map(() => "<td></td>").join("")}</tr>`).join("");
+      <td>BYE</td><td>BYE</td><td>BYE</td><td>BYE</td>${cols.filter(c => c.stat).map(() => "<td></td>").join("")}<td></td><td></td></tr>`).join("");
 
   const downloads = window.TSM_DOWNLOADS ? `<div class="controls"><span class="muted" style="font-size:14px">Download spreadsheets:</span>${
     Object.values(D.formats).map(l => `<a class="btn small" href="Week_${D.week}_Matchups_${l.replace(/ /g, "_")}.xlsx">${l} .xlsx</a>`).join("")}</div>` : "";
