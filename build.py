@@ -116,19 +116,40 @@ COLUMNS = {
 
 # --------------------------------------------------------------------------- data
 
-def fetch(url: str, name: str, max_age_hours: float = 6) -> Path:
-    """Download url into the cache (reused if fresh)."""
+STALE_SOURCES: list[str] = []      # files we fell back to an older copy of (reported in the data)
+
+
+def fetch(url: str, name: str, max_age_hours: float = 6, attempts: int = 4) -> Path:
+    """Download url into the cache (reused if fresh).
+
+    Retries with growing waits, because nflverse briefly returns errors while it republishes files.
+    If every attempt fails but an older copy is cached (CI restores yesterday's cache), use that.
+    """
+    import time
     CACHE.mkdir(exist_ok=True)
     path = CACHE / name
     if path.exists() and (dt.datetime.now().timestamp() - path.stat().st_mtime) < max_age_hours * 3600:
         return path
-    print(f"  downloading {url}", file=sys.stderr)
     req = urllib.request.Request(url, headers={"User-Agent": "fantasy-matchups-builder"})
     tmp = path.with_suffix(".part")
-    with urllib.request.urlopen(req, timeout=300) as resp, open(tmp, "wb") as f:
-        shutil.copyfileobj(resp, f, length=1 << 20)
-    tmp.replace(path)
-    return path
+    last_err = None
+    for i in range(attempts):
+        try:
+            print(f"  downloading {url}" + (f" (attempt {i + 1})" if i else ""), file=sys.stderr)
+            with urllib.request.urlopen(req, timeout=300) as resp, open(tmp, "wb") as f:
+                shutil.copyfileobj(resp, f, length=1 << 20)
+            tmp.replace(path)
+            return path
+        except Exception as e:
+            last_err = e
+            if i < attempts - 1:
+                time.sleep([10, 30, 60][min(i, 2)])
+    if path.exists():
+        print(f"  WARNING: {url} failed ({last_err}); using the cached copy from "
+              f"{dt.datetime.fromtimestamp(path.stat().st_mtime):%Y-%m-%d %H:%M}", file=sys.stderr)
+        STALE_SOURCES.append(name)
+        return path
+    raise last_err
 
 
 def num(v) -> float:
@@ -393,8 +414,35 @@ def load_injuries(season: int, week: int) -> dict[str, dict]:
 # --------------------------------------------------------------------------- analysis
 
 def pick_week(schedule: list[dict]) -> int:
+    """The upcoming week; once every regular-season game is final, one past the last week (off-season)."""
     unplayed = [int(g["week"]) for g in schedule if g["result"] in ("", "NA")]
-    return min(unplayed) if unplayed else max(int(g["week"]) for g in schedule)
+    return min(unplayed) if unplayed else max(int(g["week"]) for g in schedule) + 1
+
+
+def pick_season() -> int:
+    """The most recent season that has at least one finished regular-season game.
+
+    Goes by the schedule rather than the calendar, so the site stays on the finished season through
+    the off-season and switches once the new season's first games are played.
+    """
+    path = fetch(URL_SCHEDULE, "games.csv")
+    seasons = set()
+    with open(path, newline="") as f:
+        for g in csv.DictReader(f):
+            if g["game_type"] == "REG" and g["result"] not in ("", "NA"):
+                seasons.add(int(g["season"]))
+    if not seasons:
+        raise SystemExit("No finished games found in the schedule.")
+    return max(seasons)
+
+
+def next_season_info(season: int) -> dict | None:
+    """Kickoff date of the next season, if its schedule has been published."""
+    path = fetch(URL_SCHEDULE, "games.csv")
+    with open(path, newline="") as f:
+        days = [g["gameday"] for g in csv.DictReader(f)
+                if g["season"] == str(season + 1) and g["game_type"] == "REG" and g["gameday"] not in ("", "NA")]
+    return {"season": season + 1, "kickoff": min(days)} if days else {"season": season + 1, "kickoff": None}
 
 
 def build(season: int, week: int | None) -> dict:
@@ -403,7 +451,9 @@ def build(season: int, week: int | None) -> dict:
         raise SystemExit(f"No {season} schedule found.")
     target = week or pick_week(schedule)
     prev = target - 1
-    print(f"Season {season}, building Week {target}", file=sys.stderr)
+    last_week = max(int(g["week"]) for g in schedule)
+    offseason = target > last_week
+    print(f"Season {season}, building Week {target}" + (" (off-season: season complete)" if offseason else ""), file=sys.stderr)
 
     stats = load_stats(season)
     depth = load_depth(season)
@@ -572,10 +622,15 @@ def build(season: int, week: int | None) -> dict:
         "week": target,
         "prevWeek": prev,
         "statsThrough": max((int(g["week"]) for g in completed.values()), default=0),
+        "phase": "offseason" if offseason else "regular",
+        "lastWeek": last_week,
+        "nextSeason": next_season_info(season) if offseason else None,
+        "staleSources": STALE_SOURCES,
         "updated": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "formats": {k: FORMAT_LABEL[k] for k in FORMATS},
         "positions": positions_out,
-        "defenses": {pos: {d: {"rank": v["rank"], "fppg": v["fppg"]} for d, v in by.items()}
+        "defenses": {pos: {d: {"rank": v["rank"], "fppg": v["fppg"], **({"stats": v["stats"], "gp": v["gp"]} if offseason else {})}
+                           for d, v in by.items()}
                      for pos, by in defense_info.items()},
         "leagueAvg": league_avg,
         "players": players_out,
@@ -757,6 +812,7 @@ def build_players(plog, depth, injuries, opponent, target, snaps, pbp_player, te
 # (route, title, description, h1, intro, indexable)
 def site_routes(data: dict) -> list[tuple]:
     wk, season = data["week"], data["season"]
+    off = data.get("phase") == "offseason"
     pos_names = {"qb": "Quarterback", "rb": "Running Back", "wr": "Wide Receiver", "te": "Tight End"}
     routes = [("home", "The Sports Mattress · Fantasy Football Matchups, Start/Sit and Trade Analyzer",
                f"Free fantasy football tools for Week {wk}: color-coded matchup charts, start/sit calls, a trade analyzer, "
@@ -764,8 +820,19 @@ def site_routes(data: dict) -> list[tuple]:
                f"Week {wk} fantasy football matchups",
                "Every NFL defense ranked by the fantasy points it allows to quarterbacks, running backs, receivers and tight "
                "ends, plus start/sit calls, a trade analyzer, usage stats and rest-of-season schedules.", True)]
+    if off:
+        routes[0] = ("home", "The Sports Mattress · Fantasy Football Matchups, Start/Sit and Trade Analyzer",
+                     f"Final {season} fantasy football numbers: defense rankings by position, season leaders, usage stats and a "
+                     "trade analyzer for keeper and dynasty deals. Weekly matchups return in Week 1.",
+                     f"The {season} season is in the books",
+                     "Final defense rankings, season leaders and usage stats. Weekly matchup charts return in Week 1.", True)
     for slug, name in pos_names.items():
         P = slug.upper()
+        if off:
+            routes.append((slug, f"{season} {P} Defense Rankings: Fantasy Points Allowed · The Sports Mattress",
+                           f"Final {season} rankings of every NFL defense by fantasy points allowed to {P}s, with per-game stats allowed.",
+                           f"{season} defense rankings vs {P}s", f"Every defense ranked by what it allowed to {name.lower()}s in {season}.", True))
+            continue
         routes.append((slug, f"Week {wk} {P} Matchups: Fantasy Points Allowed by Defense · The Sports Mattress",
                        f"Week {wk} {name.lower()} matchup chart: every defense ranked by fantasy points allowed to {P}s, with "
                        f"per-game stats allowed, last week's results, team totals and kickoff weather. PPR, half PPR and standard.",
@@ -1000,18 +1067,13 @@ def write_xlsx(data: dict) -> None:
         wb.save(OUT / name)
 
 
-def default_season() -> int:
-    today = dt.date.today()
-    return today.year if today.month >= 3 else today.year - 1
-
-
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--season", type=int, default=default_season())
+    ap.add_argument("--season", type=int, help="season to build (default: the latest season with finished games)")
     ap.add_argument("--week", type=int)
     ap.add_argument("--preview", type=Path, help="also write a body-only preview site into this folder")
     args = ap.parse_args()
-    data = build(args.season, args.week)
+    data = build(args.season or pick_season(), args.week)
     write_site(data, args.preview)
 
 

@@ -608,3 +608,6 @@ table.h2h tbody th { font: 600 13px/1.2 var(--body); color: var(--muted); backgr
 /* Crawlable fallback shown before the app renders */
 .seo-fallback { display: grid; gap: 10px; max-width: 760px; }
 .seo-links { display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 0; margin: 6px 0 0; list-style: none; font-size: 14px; }
+
+/* Off-season notice */
+.off-note { border-left: 5px solid var(--s-yellow); }

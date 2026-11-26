@@ -142,8 +142,20 @@ function injOut(p) { return p.inj && /^(out|ir|pup)/i.test(p.inj.status); }
 function inactive(p) { return !p.inj && (p.missed || 0) >= 2; }
 // For hot/cold, risers and suggestions: he played in his team's last game and isn't out or doubtful.
 function playedRecently(p) { return !(p.missed >= 1) && !injOut(p) && !(p.inj && /doubtful/i.test(p.inj.status)); }
+// Off-season: every regular-season game is final. Nobody has an opponent, so "bye" means "season over".
+function offseason() { return !!(D && D.phase === "offseason"); }
+function nextSeasonText() {
+  const n = D.nextSeason;
+  if (!n) return "next season";
+  if (!n.kickoff) return `the ${n.season} season`;
+  const d = new Date(n.kickoff + "T12:00:00");
+  return `the ${n.season} season (kicks off ${d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })})`;
+}
+function offseasonNotice(what) {
+  return `<div class="panel panel-pad off-note"><strong>The ${D.season} season is over.</strong> <span class="muted">${what} returns for Week 1 of ${esc(nextSeasonText())}.</span></div>`;
+}
 function unavailable(p) {
-  return p.bye ? "on bye" : injOut(p) ? "ruled out" : inactive(p) ? `inactive (hasn't played in his team's last ${p.missed} games)` : null;
+  return p.bye && !offseason() ? "on bye" : injOut(p) ? "ruled out" : inactive(p) ? `inactive (hasn't played in his team's last ${p.missed} games)` : null;
 }
 function defFor(p) { return p.bye ? null : D.defenses[p.pos][p.opp]; }
 function teamOf(p) { return D.teams[p.team] || {}; }
@@ -152,7 +164,7 @@ function teamOf(p) { return D.teams[p.team] || {}; }
 function project(p, f = state.fmt) {
   const season = pts(p.ppg, f), recent = pts(p.l3, f);
   const base = p.g >= 3 ? 0.6 * season + 0.4 * recent : season;
-  if (p.bye) return { base, factor: 1, proj: 0 };
+  if (p.bye) return { base, factor: 1, proj: offseason() && !injOut(p) && !inactive(p) ? base : 0 };
   const d = defFor(p), avg = D.leagueAvg[p.pos][f];
   const raw = avg ? d.fppg[f] / avg : 1;
   const factor = Math.min(1.25, Math.max(0.75, 1 + 0.5 * (raw - 1)));
@@ -161,11 +173,11 @@ function project(p, f = state.fmt) {
 }
 function injBadge(p) {
   if (inactive(p)) return `<span class="badge out" title="Hasn't played in his team's last ${p.missed} games">Inactive</span>`;
-  if (p.bye) return `<span class="badge out">Bye</span>`;
+  if (p.bye && !offseason()) return `<span class="badge out">Bye</span>`;
   if (!p.inj) return p.missed >= 1 ? `<span class="badge q" title="Didn't play in his team's last game${p.injPrev ? ` (Week ${p.injPrev.week}: ${esc(p.injPrev.status)}${p.injPrev.injury ? `, ${esc(p.injPrev.injury)}` : ""})` : ""}">Missed last game</span>` : "";
   return `<span class="badge ${injOut(p) ? "out" : "q"}" title="${esc(p.inj.injury || "")}">${esc(p.inj.status)}</span>`;
 }
-function oppText(p) { return p.bye ? "BYE" : `${p.away ? "@" : "vs "}${p.opp}`; }
+function oppText(p) { return p.bye ? (offseason() ? "Season over" : "BYE") : `${p.away ? "@" : "vs "}${p.opp}`; }
 
 // ------------------------------------------------------------------ boot
 document.addEventListener("error", e => { if (e.target && e.target.tagName === "IMG") e.target.remove(); }, true);
@@ -343,6 +355,13 @@ function nextUpdate(now = new Date()) {
 function fmtET(d, opts) { return d.toLocaleString("en-US", { timeZone: "America/New_York", ...opts }); }
 function renderStatus() {
   const u = new Date(D.updated), n = nextUpdate();
+  if (offseason()) {
+    $("#statusWeek").textContent = `${D.season} season complete`;
+    $("#statusMeta").textContent = D.nextSeason && D.nextSeason.kickoff
+      ? `${D.nextSeason.season} season kicks off ${new Date(D.nextSeason.kickoff + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}`
+      : `Final ${D.season} numbers · weekly matchups return in Week 1`;
+    return;
+  }
   $("#statusWeek").textContent = `Week ${D.week} matchups are live`;
   $("#statusMeta").textContent = `Updated ${fmtET(u, { weekday: "short", hour: "numeric", minute: "2-digit" })} ET` +
     (n ? ` · Next update ${fmtET(n, { weekday: "short", hour: "numeric", minute: "2-digit" })} ET` : "");
@@ -457,7 +476,43 @@ function shareRisers(key, positions, minJump) {
   }).filter(x => x.d >= minJump).sort((a, b) => b.d - a.d).slice(0, 8);
 }
 
+function renderHomeOffseason() {
+  const f = state.fmt;
+  const leaders = POS.map(pos => {
+    const list = D.players.filter(p => p.pos === pos && p.g >= 8).sort((a, b) => pts(b.ppg, f) - pts(a.ppg, f)).slice(0, 5);
+    return `<article class="panel mcard"><div class="mcard-head"><h3>${pos}</h3><a href="#players" class="muted" style="font-size:13px">All players →</a></div>
+      <ol>${list.map((p, i) => `<li><span class="rchip" style="background:${rankColor(32 - i * 2)}">${i + 1}</span><span class="faces">${avatar(p)}</span>
+        <span class="who">${plink(p)}<small class="opp-line">${teamLogo(p.team, "sm")}<b>${esc(p.team)}</b> · ${f1(pts(p.ppg, f))} pts/g · ${p.g} games</small></span></li>`).join("")}</ol></article>`;
+  }).join("");
+  const def = POS.map(pos => {
+    const rows = Object.entries(D.defenses[pos]).sort((a, b) => b[1].rank[f] - a[1].rank[f]);
+    const item = ([t, d]) => `<li><span class="rchip" style="background:${rankColor(d.rank[f])}">${d.rank[f]}</span><span class="faces">${teamLogo(t)}</span>
+      <span class="who"><b>${esc(D.teams[t].name)}</b><small>${f1(d.fppg[f])} pts allowed/g to ${pos}s</small></span></li>`;
+    return `<article class="panel mcard"><div class="mcard-head"><h3>vs ${pos}</h3><a href="#${pos.toLowerCase()}" class="muted" style="font-size:13px">Full rankings →</a></div>
+      <ol>${rows.slice(0, 3).map(item).join("")}${rows.slice(-2).map(item).join("")}</ol></article>`;
+  }).join("");
+  $("#page").innerHTML = `
+    <section class="hero">
+      <div class="hero-main">
+        <div class="hero-quilt" aria-hidden="true">${Array.from({ length: 18 }, (_, i) => `<i style="background:${scaleColor(i % 6, 0, 2.5, 5)}"></i>`).join("")}</div>
+        <div class="eyebrow">${D.season} season · final</div>
+        <h1>The ${D.season} season is in the books</h1>
+        <p>Weekly matchup charts, start/sit calls and lineups return for Week 1 of ${esc(nextSeasonText())}. Until then: final defense rankings, season leaders, usage stats, and a Trade Analyzer for keeper and dynasty deals.</p>
+        <div class="hero-actions"><a class="btn" href="#trade">Trade Analyzer</a><a class="btn" href="#players">Player usage</a><a class="btn ghost" href="#qb">Defense rankings</a></div>
+      </div>
+      <div class="hero-side"><div class="stat-tiles">
+        <div class="panel tile"><span class="k">Next kickoff</span><span class="v" style="font-size:22px">${D.nextSeason && D.nextSeason.kickoff ? new Date(D.nextSeason.kickoff + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "TBA"}</span><span class="s">${D.nextSeason ? `${D.nextSeason.season} season` : "Schedule not out yet"}</span></div>
+        <div class="panel tile"><span class="k">Players tracked</span><span class="v">${D.players.length}</span><span class="s">Full ${D.season} season</span></div>
+      </div></div>
+    </section>
+    <section class="section"><div class="section-head"><h2>${D.season} season leaders</h2><span class="muted" style="font-size:13px">${esc(fmtLabel())} points per game, 8+ games</span></div>
+      <div class="grid-4">${leaders}</div></section>
+    <section class="section"><div class="section-head"><h2>Softest and toughest defenses</h2><span class="muted" style="font-size:13px">Top 3 and bottom 2 by ${esc(fmtLabel())} points allowed</span></div>
+      <div class="grid-4">${def}</div></section>`;
+}
+
 function renderHome() {
+  if (offseason()) return renderHomeOffseason();
   const f = state.fmt;
   const playing = Object.entries(D.teams).filter(([, t]) => t.opp);
   const byes = Object.entries(D.teams).filter(([, t]) => !t.opp).map(([k]) => k);
@@ -618,7 +673,28 @@ function namesHtml(r) {
 }
 
 // ------------------------------------------------------------------ MATCHUPS
+function renderDefenseRankings() {
+  const pos = state.pos, f = state.fmt, block = D.positions[pos];
+  const rows = Object.entries(D.defenses[pos]).sort((a, b) => b[1].rank[f] - a[1].rank[f]);
+  const st = { fppg: stops(rows.map(r => r[1].fppg[f])) };
+  block.columns.forEach(c => { st[c.key] = stops(rows.map(r => (r[1].stats || {})[c.key])); });
+  $("#page").innerHTML = `
+    ${pageHead(`${D.season} final · ${esc(fmtLabel())}`, `${pos} Defense Rankings`, `Every defense ranked by what it allowed to ${POS_NAME[pos]} over the full ${D.season} season.`)}
+    ${offseasonNotice("The weekly matchup chart")}
+    <div class="controls"><div class="seg seg-lg" role="group" aria-label="Position">${POS.map(p => `<button type="button" data-action="pos" data-v="${p}" aria-pressed="${p === pos}">${p}</button>`).join("")}</div></div>
+    <div class="legend"><span>Tough</span><span class="bar" aria-hidden="true"></span><span>Soft</span><span>Rank 1 = fewest ${esc(fmtLabel())} points allowed to ${POS_NAME[pos]}, 32 = most</span></div>
+    <div class="table-box"><table>
+      <thead><tr><th class="sticky l" scope="col">Defense</th><th scope="col">Rank</th><th scope="col">FPPG</th>${block.columns.map(c => `<th scope="col">${c.label}</th>`).join("")}</tr></thead>
+      <tbody>${rows.map(([t, d]) => `<tr><td class="sticky l"><span class="team-cell">${teamLogo(t)}<span><b>${esc(t)}</b> <span class="team-tag">${esc(D.teams[t].name)}</span></span></span></td>
+        <td class="scale rank" style="background:${rankColor(d.rank[f])}">${d.rank[f]}</td>
+        <td class="scale" style="background:${scaleColor(d.fppg[f], ...st.fppg)}">${f1(d.fppg[f])}</td>
+        ${block.columns.map(c => { const v = (d.stats || {})[c.key]; return v == null ? "<td>—</td>" : `<td class="scale" style="background:${scaleColor(v, ...st[c.key], YELLOW)}">${Number(v).toFixed(c.dp)}</td>`; }).join("")}</tr>`).join("")}</tbody>
+    </table></div>
+    ${methodLink("matchup charts")}`;
+}
+
 function renderMatchups() {
+  if (offseason()) return renderDefenseRankings();
   const pos = state.pos, f = state.fmt;
   const block = D.positions[pos];
   const cols = [
@@ -691,6 +767,12 @@ function renderMatchups() {
 // ------------------------------------------------------------------ START / SIT
 function saveSS() { store.set("tsm-ss", { a: ss.a && ss.a.id, b: ss.b && ss.b.id }); }
 function renderStartSit() {
+  if (offseason()) {
+    $("#page").innerHTML = `${pageHead(`${D.season} season · final`, "Start / Sit", "Compare any two players, at any position, with a matchup-adjusted verdict.")}
+      ${offseasonNotice("Start / Sit")}
+      <p class="muted">In the meantime, the <a href="#trade">Trade Analyzer</a> compares players on full-season value, and <a href="#players">Player usage</a> has every player's ${D.season} numbers.</p>`;
+    return;
+  }
   $("#page").innerHTML = `
     ${pageHead(`Week ${D.week} · ${esc(fmtLabel())}`, "Start / Sit", "Compare any two players, at any position. The call weighs each player's own scoring and usage against this week's matchup.")}
     <div class="pickers">
@@ -902,7 +984,8 @@ function renderMyTeam() {
   const warnings = lineup.filter(x => x.p && unavailable(x.p)).map(x => `${x.p.name} is ${unavailable(x.p)}, and you don't have another ${x.slot === "FLEX" ? "flex-eligible player" : x.slot} to replace him.`);
 
   $("#page").innerHTML = `
-    ${pageHead(`Week ${D.week} · ${esc(fmtLabel())}`, r.cloud && r.team ? esc(r.team.name) : "My Team", r.cloud
+    ${offseason() ? offseasonNotice("This week's lineup") : ""}
+    ${pageHead(offseason() ? `${D.season} season · final` : `Week ${D.week} · ${esc(fmtLabel())}`, r.cloud && r.team ? esc(r.team.name) : "My Team", r.cloud
       ? "Your roster is saved to your account. Here's this week's best lineup, ranked by matchup-adjusted projection."
       : "Add your roster and get this week's best lineup, ranked by matchup-adjusted projection.")}
     ${r.cloud ? teamSwitcher() : sb ? `<div class="panel panel-pad save-cta"><span><strong>Save your team.</strong> <span class="muted">Right now it's only in this browser. Create a free account to keep it, add more teams and use it on any device.</span></span><span style="display:flex;gap:8px"><a class="btn small" href="#login">Log in</a><a class="btn small primary" href="#signup">Create account</a></span></div>` : ""}
@@ -1004,6 +1087,12 @@ function renderPlayers() {
 
 // ------------------------------------------------------------------ SCHEDULE (strength of schedule)
 function renderSchedule() {
+  if (offseason()) {
+    $("#page").innerHTML = `${pageHead(`${D.season} season · final`, "Strength of Schedule", "Who each team's players face the rest of the way, by position.")}
+      ${offseasonNotice("Strength of schedule")}
+      <p class="muted">Want to know which defenses were soft this year? See the <a href="#qb">${D.season} defense rankings</a>.</p>`;
+    return;
+  }
   const pos = state.sos.pos, f = state.fmt;
   const weeks = [];
   for (let w = D.week; w <= 18; w++) weeks.push(w);
@@ -1133,8 +1222,8 @@ function fillPlayer(p) {
     <div class="section">
       <h3>Week ${D.week}</h3>
       <div class="pd-week">
-        ${tile("Opponent", p.bye ? "BYE" : `${p.away ? "@" : ""}${esc(p.opp)}`, p.bye ? "" : esc(kickLabel(p.kick, true)))}
-        ${tile("Matchup", d ? `${d.rank[f]}<span style="font-size:14px"> /32</span>` : "—", d ? `${f1(d.fppg[f])} pts allowed/g` : "")}
+        ${tile("Opponent", p.bye ? (offseason() ? "—" : "BYE") : `${p.away ? "@" : ""}${esc(p.opp)}`, p.bye ? "" : esc(kickLabel(p.kick, true)))}
+        ${tile("Matchup", d ? `${d.rank[f]}<span style="font-size:14px"> /32</span>` : "—", d ? `${f1(d.fppg[f])} pts allowed/g` : offseason() ? "Season over" : "")}
         ${tile("Team proj", t.implied != null && !p.bye ? f1(t.implied) : "—", t.total != null && !p.bye ? `O/U ${t.total}` : "")}
         ${tile("Projection", unavailable(p) ? "—" : f1(pr.proj), `${esc(fmtLabel())} pts`)}
       </div>
@@ -1222,7 +1311,8 @@ function rosValue(p, f = state.fmt) {
   const base = p.g >= 3 ? 0.6 * m.season + 0.4 * m.recent : m.season;
   const t = D.teams[p.team] || { sched: [] };
   const avg = D.leagueAvg[p.pos][f];
-  const games = t.sched.filter(([w]) => w <= FANTASY_END).map(([w, o, a]) => {
+  // Off-season: value a full 17-game season at his scoring rate (useful for keeper and dynasty trades).
+  const games = offseason() ? Array.from({ length: 17 }, (_, i) => ({ w: i + 1, o: null, a: 0, rank: null, factor: 1 })) : t.sched.filter(([w]) => w <= FANTASY_END).map(([w, o, a]) => {
     const d = D.defenses[p.pos][o];
     const factor = Math.min(1.2, Math.max(0.8, 1 + 0.5 * (d.fppg[f] / avg - 1)));
     return { w, o, a, rank: d.rank[f], factor };
@@ -1243,7 +1333,7 @@ function rosValue(p, f = state.fmt) {
   const trade = Math.max(0, vorp) + 0.15 * total;
   const playoff = games.reduce((s, g, i) => s + (PLAYOFF_WEEKS.has(g.w) ? perGame[i] : 0), 0);
   const po = games.filter(g => PLAYOFF_WEEKS.has(g.w));
-  const avgRank = arr => arr.length ? arr.reduce((s, g) => s + g.rank, 0) / arr.length : null;
+  const avgRank = arr => arr.length && arr.every(g => g.rank != null) ? arr.reduce((s, g) => s + g.rank, 0) / arr.length : null;
   const played = avail.filter(v => v > 0).length;
   return {
     base, total, playoff, games, played, repl, vorp, trade,
@@ -1328,7 +1418,7 @@ function renderTrade() {
   const all = [...give.map(p => ({ p, side: "give" })), ...get.map(p => ({ p, side: "get" }))];
   const info = new Map(all.map(({ p }) => { const v = rosValue(p, f), mm = m.byId.get(p.id); return [p.id, { v, m: mm, form: formOf(mm), timing: timingOf(mm, v) }]; }));
   const rosterIds = roster().example ? [] : roster().ids;
-  const weeksLeft = Math.max(0, FANTASY_END - D.week + 1);
+  const weeksLeft = offseason() ? 17 : Math.max(0, FANTASY_END - D.week + 1);
 
   const sideList = (side, list) => `
     <div class="panel trade-side ${side}">
@@ -1352,7 +1442,9 @@ function renderTrade() {
     const giveShare = G.weighted / ((G.weighted + R.weighted) || 1) * 100;
     const poG = give.reduce((s, p) => s + info.get(p.id).v.playoff, 0), poR = get.reduce((s, p) => s + info.get(p.id).v.playoff, 0);
     const reasons = [];
-    reasons.push(`Rest of season (Weeks ${D.week}–${FANTASY_END}), you get ${f1(R.raw)} projected points and give up ${f1(G.raw)}.`);
+    reasons.push(offseason()
+      ? `Over a full 17-game season at their ${D.season} scoring rates, you get ${f1(R.raw)} projected points and give up ${f1(G.raw)}.`
+      : `Rest of season (Weeks ${D.week}–${FANTASY_END}), you get ${f1(R.raw)} projected points and give up ${f1(G.raw)}.`);
     const best = all.map(x => ({ ...x, v: info.get(x.p.id).v })).sort((a, b) => b.v.perGame - a.v.perGame)[0];
     if (best) reasons.push(`The best player in the deal is ${best.p.name} (${f1(best.v.perGame)} projected pts/game), and ${best.side === "get" ? "you'd get him" : "you'd be giving him up"}.`);
     if (give.length !== get.length) {
@@ -1431,10 +1523,10 @@ function renderTrade() {
         ${use("Red-zone chances/g", p.season.rzTgt + p.season.rzCar, p.recent.rzTgt + p.recent.rzCar, f1)}
         <div class="kv"><span>Points from TDs</span><b>${pct(mm.tdShare)}</b><span class="muted">${mm.tdShare >= 0.38 ? "TD-dependent" : ""}</span></div>
       </div>
-      <h4>Schedule <span class="muted">opponent rank vs ${p.pos}s, 32 = softest</span></h4>
+      ${offseason() ? `<h4>Schedule</h4><p class="muted" style="margin:0;font-size:13px">Strength of schedule appears once ${esc(nextSeasonText())} is under way. Values above assume a full 17-game season.</p>` : `      <h4>Schedule <span class="muted">opponent rank vs ${p.pos}s, 32 = softest</span></h4>
       <div class="sched-row"><span class="sched-label">Next 4 <b>${v.next4 != null ? f1(v.next4) : "—"}</b></span><div class="report-sched">${next4.map(chip).join("") || `<span class="muted">No games left</span>`}</div></div>
       ${po.length ? `<div class="sched-row"><span class="sched-label">Playoffs <b>${f1(v.poRank)}</b></span><div class="report-sched">${po.map(chip).join("")}</div></div>` : ""}
-      <div class="sched-row"><span class="sched-label">Rest of season <b>${v.ros != null ? f1(v.ros) : "—"}</b></span><span class="muted" style="font-size:12px">${v.games.length} games through Week ${FANTASY_END}</span></div>
+      <div class="sched-row"><span class="sched-label">Rest of season <b>${v.ros != null ? f1(v.ros) : "—"}</b></span><span class="muted" style="font-size:12px">${v.games.length} games through Week ${FANTASY_END}</span></div>`}
     </article>`;
   };
 

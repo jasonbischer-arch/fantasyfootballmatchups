@@ -50,6 +50,19 @@ usage and team tendencies).
 **every day at 5am** (US Eastern), and on every push to `main`.
 To rebuild by hand: **Actions → Update matchup charts → Run workflow** (you can force a week).
 
+## Reliability, off-season and keep-alive
+
+- **Retries and fallback:** every download is retried with growing waits. The workflow caches the last run's
+  downloads, so if a source is still down the build uses yesterday's copy (listed in `data.json` as `staleSources`).
+- **Alerts:** if a scheduled update fails, uses stale data, or the Supabase keep-alive fails, the workflow opens a
+  GitHub issue labeled `site-update-alert` (GitHub emails you) and closes it after the next good run. A failed build
+  never replaces the live site.
+- **Season detection:** the season is the latest one with finished regular-season games, read from the schedule.
+  After Week 18 the site switches to **off-season mode**: final defense rankings, season leaders, full-season trade
+  values and "returns in Week 1" notices, with next season's kickoff date once the schedule is published. It moves to
+  the new season automatically once its first games are final. To preview it: `python build.py --season 2025`.
+- **Supabase keep-alive:** each scheduled run makes one small read from the database so the free project never pauses.
+
 ## Run it locally
 
 ```bash

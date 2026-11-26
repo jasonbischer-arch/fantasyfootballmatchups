@@ -47,14 +47,29 @@ jobs:
     needs: when
     if: needs.when.outputs.go == 'true'
     runs-on: ubuntu-latest
+    outputs:
+      stale: ${{ steps.report.outputs.stale }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
+      # Keep the last run's downloads. If a data source is down, build.py retries and then falls
+      # back to this copy instead of failing.
+      - uses: actions/cache@v4
+        with:
+          path: .cache
+          key: nflverse-${{ github.run_id }}
+          restore-keys: nflverse-
       - name: Build charts
         run: python build.py ${{ github.event.inputs.week && format('--week {0}', github.event.inputs.week) || '' }}
+      - name: Report stale data sources
+        id: report
+        run: |
+          stale=$(python -c "import json; print(', '.join(json.load(open('site/data.json')).get('staleSources', [])))")
+          echo "stale=$stale" >> "$GITHUB_OUTPUT"
+          if [ -n "$stale" ]; then echo "::warning::Built with cached copies of: $stale"; fi
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
@@ -68,3 +83,57 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+
+  # Free Supabase projects pause after a week without activity; a tiny daily read keeps accounts working.
+  keepalive:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ping Supabase
+        run: |
+          read -r url key < <(python3 -c "import re; s=open('build.py').read(); u=re.search(r'SUPABASE_URL = \"([^\"]+)\"', s).group(1); k=''.join(re.search(r'SUPABASE_ANON_KEY = \(\"([^\"]+)\"\s*\"([^\"]+)\"\)', s).groups()); print(u, k)")
+          for i in 1 2 3; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" "$url/rest/v1/profiles?select=id&limit=1" -H "apikey: $key" -H "Authorization: Bearer $key")
+            echo "Supabase responded $code"
+            [ "$code" = "200" ] && exit 0
+            sleep 20
+          done
+          exit 1
+
+  # Open a GitHub issue (GitHub emails you) when a scheduled update fails or uses stale data;
+  # close it automatically once a later run succeeds.
+  notify:
+    needs: [when, build, deploy, keepalive]
+    if: always() && github.event_name == 'schedule' && needs.when.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/github-script@v7
+        env:
+          BUILD: ${{ needs.build.result }}
+          DEPLOY: ${{ needs.deploy.result }}
+          KEEPALIVE: ${{ needs.keepalive.result }}
+          STALE: ${{ needs.build.outputs.stale }}
+        with:
+          script: |
+            const { BUILD, DEPLOY, KEEPALIVE, STALE } = process.env;
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const problems = [];
+            if (BUILD !== "success") problems.push(`The data build ${BUILD}. The site still shows the last good update.`);
+            else if (DEPLOY !== "success") problems.push(`Publishing the site ${DEPLOY}.`);
+            if (STALE) problems.push(`Some data sources were down, so the site used yesterday's copy of: ${STALE}.`);
+            if (KEEPALIVE === "failure") problems.push("The daily Supabase keep-alive request failed; check that the project isn't paused.");
+            const label = "site-update-alert";
+            const open = await github.rest.issues.listForRepo({ ...context.repo, state: "open", labels: label });
+            if (problems.length) {
+              const body = `**${new Date().toISOString().slice(0, 10)} daily update**\n\n- ${problems.join("\n- ")}\n\nRun log: ${runUrl}`;
+              if (open.data.length) await github.rest.issues.createComment({ ...context.repo, issue_number: open.data[0].number, body });
+              else await github.rest.issues.create({ ...context.repo, title: "Daily site update needs attention", labels: [label], body });
+            } else {
+              for (const i of open.data) {
+                await github.rest.issues.createComment({ ...context.repo, issue_number: i.number, body: `Resolved: today's update succeeded. ${runUrl}` });
+                await github.rest.issues.update({ ...context.repo, issue_number: i.number, state: "closed" });
+              }
+            }
