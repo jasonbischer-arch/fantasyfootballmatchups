@@ -1664,6 +1664,7 @@ function renderTerms() {
 const SB_CFG = window.TSM_SB || {};
 // Email links (confirm sign-up, password reset) land here with details in the #hash. Read them before the
 // Supabase client consumes and clears them, so we can say what happened.
+const MIN_PASSWORD = 10;   // keep in sync with Supabase: Authentication → Sign In / Providers → Email → minimum password length
 const AUTH_LANDING = (() => {
   const h = new URLSearchParams((location.hash || "").replace(/^#/, ""));
   if (h.get("error_description")) return { error: h.get("error_description").replace(/\+/g, " ") };
@@ -1689,7 +1690,7 @@ function friendlyError(e) {
   if (/already registered|already been registered/i.test(m)) return "There's already an account with that email. Log in instead, or reset your password.";
   if (/rate limit/i.test(m)) return "Too many attempts. Wait a few minutes and try again.";
   if (/error sending|not authorized/i.test(m)) return "We couldn't send the email right now. Try again later.";
-  if (/password/i.test(m) && /characters|short|weak/i.test(m)) return "Use a password of at least 8 characters.";
+  if (/password/i.test(m) && /characters|short|weak/i.test(m)) return `Use a password of at least ${MIN_PASSWORD} characters.`;
   return m;
 }
 
@@ -1837,7 +1838,7 @@ function renderSignup() {
     sb ? `<form class="auth-form" id="signupForm" novalidate>
       <div class="field"><label for="suName">Display name</label><input id="suName" type="text" maxlength="40" autocomplete="nickname" placeholder="What should we call you?"></div>
       <div class="field"><label for="suEmail">Email</label><input id="suEmail" type="email" autocomplete="email" required></div>
-      <div class="field"><label for="suPass">Password</label><input id="suPass" type="password" autocomplete="new-password" minlength="8" required><small class="muted">At least 8 characters.</small></div>
+      <div class="field"><label for="suPass">Password</label><input id="suPass" type="password" autocomplete="new-password" minlength="${MIN_PASSWORD}" required><small class="muted">At least ${MIN_PASSWORD} characters.</small></div>
       <p class="auth-msg" id="authMsg" role="alert"></p>
       <button type="submit" class="btn primary wide">Create account</button>
       <p class="muted" style="margin:0;font-size:12px">By creating an account you agree to the <a href="#terms">Terms of Use</a> and <a href="#privacy">Privacy</a> policy.</p></form>` : noAuth(),
@@ -1854,7 +1855,7 @@ function renderForgot() {
 function renderReset() {
   $("#page").innerHTML = authShell("Set a new password", signedIn() ? "Choose a new password for your account." : "Open the reset link from your email to set a new password.",
     signedIn() ? `<form class="auth-form" id="resetForm" novalidate>
-      <div class="field"><label for="rsPass">New password</label><input id="rsPass" type="password" autocomplete="new-password" minlength="8" required><small class="muted">At least 8 characters.</small></div>
+      <div class="field"><label for="rsPass">New password</label><input id="rsPass" type="password" autocomplete="new-password" minlength="${MIN_PASSWORD}" required><small class="muted">At least ${MIN_PASSWORD} characters.</small></div>
       <p class="auth-msg" id="authMsg" role="alert"></p>
       <button type="submit" class="btn primary wide">Save new password</button></form>` : "",
     `<a href="#login">Back to log in</a>`);
@@ -1875,7 +1876,7 @@ async function onAuthSubmit(e) {
       toast("Welcome back!"); navigate("my-team");
     } else if (f.id === "signupForm") {
       if (!/^\S+@\S+\.\S+$/.test(val("suEmail").trim())) return say("Enter a valid email address.");
-      if (val("suPass").length < 8) return say("Use a password of at least 8 characters.");
+      if (val("suPass").length < MIN_PASSWORD) return say(`Use a password of at least ${MIN_PASSWORD} characters.`);
       const { data, error } = await sb.auth.signUp({
         email: val("suEmail").trim(), password: val("suPass"),
         options: { data: { display_name: val("suName").trim() || undefined }, emailRedirectTo: SB_CFG.site || location.href.split("#")[0] },
@@ -1890,7 +1891,7 @@ async function onAuthSubmit(e) {
       if (error) return say(friendlyError(error));
       say("If there's an account with that email, a reset link is on its way.", true);
     } else if (f.id === "resetForm") {
-      if (val("rsPass").length < 8) return say("Use a password of at least 8 characters.");
+      if (val("rsPass").length < MIN_PASSWORD) return say(`Use a password of at least ${MIN_PASSWORD} characters.`);
       const { error } = await sb.auth.updateUser({ password: val("rsPass") });
       if (error) return say(friendlyError(error));
       account.recovery = false; toast("Password updated"); navigate("account");
