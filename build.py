@@ -33,6 +33,8 @@ ROOT = Path(__file__).resolve().parent
 SITE_URL = "https://sportsmattress.io/"
 # Supabase project for accounts. The anon key is meant to be public: row level security in the
 # database limits every signed-in user to their own rows.
+# Google Tag Manager container (manages Google Analytics). Empty string turns it off.
+GTM_ID = "GTM-WDFGCDGP"
 SUPABASE_URL = "https://wwqyqvkuaxchfcunajwt.supabase.co"
 SUPABASE_ANON_KEY = ("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind3cXlxdmt1YXhjaGZjdW5hand0"
                      "Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTU2NTIxMzYsImV4cCI6MjExMTIyODEzNn0.swTtGyHesNC1_35A2XeZWsmSXUHfhpmgeJMb7V1HvN0")
@@ -795,6 +797,23 @@ def site_routes(data: dict) -> list[tuple]:
     return routes
 
 
+def gtm_head() -> str:
+    if not GTM_ID:
+        return ""
+    return ("<!-- Google Tag Manager -->\n<script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':\n"
+            "new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],\n"
+            "j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=\n"
+            "'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);\n"
+            f"}})(window,document,'script','dataLayer','{GTM_ID}');</script>\n<!-- End Google Tag Manager -->")
+
+
+def gtm_body() -> str:
+    if not GTM_ID:
+        return ""
+    return (f'<!-- Google Tag Manager (noscript) -->\n<noscript><iframe src="https://www.googletagmanager.com/ns.html?id={GTM_ID}" '
+            'height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>\n<!-- End Google Tag Manager (noscript) -->')
+
+
 def esc_html(text: str) -> str:
     return (text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
 
@@ -834,6 +853,7 @@ def render_html(downloads: bool, build_id: str, clean: bool = False, base: str =
     html = html.replace("/*__SUPABASE__*/null", json.dumps({"url": SUPABASE_URL, "key": SUPABASE_ANON_KEY, "site": SITE_URL}))
     html = html.replace("/*__CLEAN__*/false", "true" if clean else "false")
     html = html.replace("/*__TITLES__*/null", json.dumps({r[0]: r[1] for r in (routes or [])}).replace("</", "<\\/"))
+    html = html.replace("<!--__GTM_HEAD__-->", gtm_head() if clean else "").replace("<!--__GTM_BODY__-->", gtm_body() if clean else "")
     return html.replace("/*__DOWNLOADS__*/true", "true" if downloads else "false")
 
 
@@ -877,11 +897,11 @@ def write_site(data: dict, preview: Path | None) -> None:
                                      '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' + urls + "</urlset>\n")
     # Real 404 page (GitHub Pages serves it with a 404 status) with links back into the site.
     (OUT / "404.html").write_text(
-        '<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
+        '<!doctype html>\n<html lang="en"><head><meta charset="utf-8">' + gtm_head() + '<meta name="viewport" content="width=device-width, initial-scale=1">'
         '<title>Page not found · The Sports Mattress</title><meta name="robots" content="noindex">'
         '<link rel="icon" href="/favicon.ico" sizes="32x32"><link rel="stylesheet" href="/assets/app.css">'
         '<style>.nf{max-width:640px;margin:0 auto;padding:80px 20px;display:grid;gap:16px}.nf a.btn{width:fit-content}</style></head>'
-        '<body><main class="nf"><a class="wordmark" href="/" style="text-decoration:none;font-size:34px">The Sports Mattress</a>'
+        '<body>' + gtm_body() + '<main class="nf"><a class="wordmark" href="/" style="text-decoration:none;font-size:34px">The Sports Mattress</a>'
         '<h1>Page not found</h1><p class="lede">That page doesn\'t exist or has moved.</p>'
         '<p><a class="btn primary" href="/">Go to this week\'s matchups</a></p>'
         '<p class="muted">Or try the <a href="/trade/">Trade Analyzer</a>, <a href="/start-sit/">Start / Sit</a> or <a href="/qb/">matchup charts</a>.</p>'

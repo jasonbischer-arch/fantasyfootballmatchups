@@ -256,8 +256,18 @@ function route(scroll) {
   render();
   setMenu(false);
   if (scroll) { window.scrollTo(0, 0); $("#page").focus({ preventScroll: true }); }
+  trackPageView(scroll);
 }
 
+// Analytics: tell Google Tag Manager about page changes made without a full reload.
+let lastTracked = "";
+function trackPageView(isNavigation) {
+  const path = location.pathname + location.hash.replace(/^#(.*=.*)?$/, "");
+  if (!isNavigation || path === lastTracked) { lastTracked = path; return; }   // first load is counted by the tag itself
+  lastTracked = path;
+  window.dataLayer = window.dataLayer || [];
+  window.dataLayer.push({ event: "virtual_page_view", page_path: path, page_location: location.href, page_title: document.title });
+}
 function render() {
   document.querySelectorAll("button[data-fmt]").forEach(b => b.setAttribute("aria-pressed", b.dataset.fmt === state.fmt));
   const fn = { home: renderHome, matchups: renderMatchups, "start-sit": renderStartSit, "my-team": renderMyTeam,
@@ -1510,9 +1520,10 @@ function renderPrivacy() {
       <p>Account data is stored with <a href="https://supabase.com/" target="_blank" rel="noopener">Supabase</a> in the United States. Each account can only read and change its own data. You stay logged in on a device until you log out.</p>`],
     ["Deleting your data", `<p>Delete your account any time from <a href="#account">Your Account</a>. That permanently removes your login and everything saved to it.</p>`],
     ["Emails", `<p>We only email you for account tasks you start, like confirming your address or resetting your password. No newsletters or marketing.</p>`],
-    ["What we don't collect", `<p>No payment details and no advertising or analytics trackers.</p>`],
+    ["Analytics", `<p>We use Google Analytics, through Google Tag Manager, to count visits and see which pages and tools people use. It uses cookies and collects standard information such as pages viewed, approximate location, device and browser. We don't send it your email, roster or anything you type. You can opt out with Google's <a href="https://tools.google.com/dlpage/gaoptout" target="_blank" rel="noopener">browser add-on</a> or by blocking cookies.</p>`],
+    ["What we don't collect", `<p>No payment details and no advertising trackers. We don't sell your information.</p>`],
     ["Other services", `<p>To show the site, your browser loads fonts from Google Fonts, player photos from NFL.com and team logos from ESPN. Those services receive standard request information (like your IP address) under their own privacy policies. The site is hosted on GitHub Pages.</p>`],
-    ["Changes", `<p>If this changes (for example, if we add analytics), this page will be updated first.</p>`],
+    ["Changes", `<p>If this changes, this page will be updated first.</p>`],
   ]);
 }
 
