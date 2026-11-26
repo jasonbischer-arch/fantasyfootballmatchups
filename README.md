@@ -50,6 +50,18 @@ usage and team tendencies).
 **every day at 5am** (US Eastern), and on every push to `main`.
 To rebuild by hand: **Actions → Update matchup charts → Run workflow** (you can force a week).
 
+## News and blog
+
+- **News** (`/news/`): headlines from public RSS feeds (ESPN, CBS Sports, Yahoo Sports, Pro Football Rumors,
+  RotoBaller), refreshed every 3 hours. Only the headline, source, time and a short summary are shown, linking to the
+  original article. Headlines are tagged with the players they mention and appear in each player's panel.
+  Feeds are listed in `NEWS_FEEDS` in `build.py`.
+- **Blog** (`/blog/`): posts live in Supabase (`posts` table, images in the public `blog` storage bucket). Admins write at
+  `/write/` (Markdown editor with preview, cover upload, drafts, publish/unpublish). Published posts appear immediately;
+  every build also pre-renders `/blog/<slug>/` with the full article, Open Graph tags and BlogPosting data for search.
+- **Admins** are rows in `public.admins`, which can only be changed in the Supabase dashboard/SQL:
+  `insert into public.admins (user_id) select id from auth.users where email = 'you@example.com';`
+
 ## Reliability, off-season and keep-alive
 
 - **Retries and fallback:** every download is retried with growing waits. The workflow caches the last run's

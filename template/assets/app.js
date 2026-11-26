@@ -6,11 +6,12 @@ const POS = ["QB", "RB", "WR", "TE"];
 const POS_NAME = { QB: "quarterbacks", RB: "running backs", WR: "wide receivers", TE: "tight ends" };
 const RECENT = 3;
 const PLAYOFF_WEEKS = new Set([15, 16, 17]);
-const PAGES = ["home", "matchups", "start-sit", "my-team", "trade", "players", "schedule", "teams", "about", "how-it-works", "privacy", "terms", "login", "signup", "forgot", "reset", "account"];
+const PAGES = ["home", "matchups", "start-sit", "my-team", "trade", "players", "schedule", "teams", "about", "how-it-works", "privacy", "terms", "login", "signup", "forgot", "reset", "account", "news", "blog", "write", "notfound"];
 const PAGE_TITLES = {
   home: "Fantasy Football Matchups, Start/Sit and Trade Analyzer", "start-sit": "Start / Sit", "my-team": "My Team",
   trade: "Trade Analyzer", players: "Player Usage", schedule: "Strength of Schedule", teams: "Team Tendencies",
   about: "About", "how-it-works": "How It Works", privacy: "Privacy", terms: "Terms of Use",
+  news: "Fantasy Football News", blog: "Blog", write: "Write", notfound: "Page not found", post: "Article",
   login: "Log in", signup: "Create account", forgot: "Reset password", reset: "Set new password", account: "Your account",
 };
 
@@ -19,7 +20,7 @@ let D = null;                         // data.json
 const CLEAN = !!window.TSM_CLEAN;
 const BASE = window.TSM_BASE || "";
 const routePath = r => (r === "home" ? "/" : `/${r}/`);
-function isRoute(r) { return PAGES.includes(r) || POS.includes(String(r).toUpperCase()); }
+function isRoute(r) { return PAGES.includes(r) || POS.includes(String(r).toUpperCase()) || /^blog\/[a-z0-9-]+$/.test(r); }
 function currentRoute() {
   if (CLEAN) return location.pathname.replace(/^\/+|\/+$/g, "").toLowerCase() || "home";
   return location.hash.slice(1).toLowerCase();
@@ -257,10 +258,12 @@ function boot() {
 function route(scroll) {
   const h = currentRoute();
   if (POS.includes(h.toUpperCase())) { state.page = "matchups"; state.pos = h.toUpperCase(); state.sort = null; }
-  else state.page = PAGES.includes(h) ? h : "home";
+  else if (/^blog\/[a-z0-9-]+$/.test(h)) { state.page = "post"; state.slug = h.slice(5); }
+  else state.page = PAGES.includes(h) ? h : (CLEAN && h !== "home" ? "notfound" : "home");
   if (state.page === "matchups" && !POS.includes(state.pos)) state.pos = "QB";
+  const navPage = { blog: "news", post: "news", write: "news" }[state.page] || state.page;
   document.querySelectorAll("#nav a").forEach(a => {
-    if (a.dataset.page === state.page) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
+    if (a.dataset.page === navPage) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   });
   document.querySelector('#nav a[data-page="matchups"]').setAttribute("href", CLEAN ? routePath(state.pos.toLowerCase()) : "#" + state.pos.toLowerCase());
   // On narrow screens the menu scrolls sideways; keep the current tab in view.
@@ -311,7 +314,8 @@ function render() {
   document.querySelectorAll("button[data-fmt]").forEach(b => b.setAttribute("aria-pressed", b.dataset.fmt === state.fmt));
   const fn = { home: renderHome, matchups: renderMatchups, "start-sit": renderStartSit, "my-team": renderMyTeam,
     players: renderPlayers, schedule: renderSchedule, teams: renderTeams, trade: renderTrade, about: renderAbout, "how-it-works": renderHow, privacy: renderPrivacy, terms: renderTerms,
-    login: renderLogin, signup: renderSignup, forgot: renderForgot, reset: renderReset, account: renderAccount }[state.page];
+    login: renderLogin, signup: renderSignup, forgot: renderForgot, reset: renderReset, account: renderAccount,
+    news: renderNews, blog: renderBlog, post: renderPost, write: renderWrite, notfound: renderNotFound }[state.page];
   // Use the same search-friendly titles as the pre-built pages.
   const T = window.TSM_TITLES || {};
   document.title = T[state.page === "matchups" ? state.pos.toLowerCase() : state.page] ||
@@ -364,7 +368,7 @@ function renderStatus() {
   }
   $("#statusWeek").textContent = `Week ${D.week} matchups are live`;
   $("#statusMeta").textContent = `Updated ${fmtET(u, { weekday: "short", hour: "numeric", minute: "2-digit" })} ET` +
-    (n ? ` · Next update ${fmtET(n, { weekday: "short", hour: "numeric", minute: "2-digit" })} ET` : "");
+    (n ? ` · Next full update ${fmtET(n, { weekday: "short", hour: "numeric", minute: "2-digit" })} ET` : "");
 }
 function methodLink(topic) {
   return `<p class="method-link">How ${topic} work: <a href="#how-it-works">see How It Works</a>.</p>`;
@@ -647,6 +651,9 @@ function renderHome() {
         ${listPanel(cold, "Nobody is in a slump right now.")}</div>
     </section>
 
+
+    ${(D.news || []).length ? `<section class="section"><div class="section-head"><h2>Latest news</h2><a href="#news">All headlines →</a></div>
+      <div class="panel news-list">${D.news.slice(0, 6).map(n => headlineRow(n, true)).join("")}</div></section>` : ""}
 
     <section class="section">
       <div class="section-head"><h2>Game slate</h2><span class="muted" style="font-size:13px">Projected points from the betting line</span></div>
@@ -1240,6 +1247,7 @@ function fillPlayer(p) {
       <thead><tr>${logHead.map(h => `<th scope="col">${h}</th>`).join("")}</tr></thead>
       <tbody>${logRows.map(r => `<tr>${r.map(c => `<td>${esc(c ?? "—")}</td>`).join("")}</tr>`).join("")}</tbody>
     </table></div>
+    ${(D.news || []).some(n => (n.players || []).includes(p.id)) ? `<div class="section"><h3>Latest news</h3><div class="panel news-list">${(D.news || []).filter(n => (n.players || []).includes(p.id)).slice(0, 4).map(n => headlineRow(n, true)).join("")}</div></div>` : ""}
     <div class="pd-actions">
       <button type="button" class="btn primary" data-action="compare" data-id="${esc(p.id)}">Compare in Start / Sit</button>
       <button type="button" class="btn" data-action="roster" data-id="${esc(p.id)}">${onRoster ? "Remove from My Team" : "Add to My Team"}</button>
@@ -1708,6 +1716,8 @@ async function loadCloud() {
   account.trades = trades.data || [];
   account.watch = new Set((watch.data || []).map(r => r.player_id));
   account.activeTeamId = account.profile.active_team_id || (account.teams[0] && account.teams[0].id) || null;
+  const adm = await sb.rpc("is_admin");
+  account.isAdmin = adm.data === true;
   // First login on this device: bring over a team built while logged out.
   const local = store.get("tsm-roster", null);
   if (!account.teams.length && Array.isArray(local) && local.length) {
@@ -1729,16 +1739,19 @@ function initAuth() {
   }
   sb.auth.onAuthStateChange((event, session) => {
     const was = account.user && account.user.id;
+    const firstCheck = !account.ready;
+    account.ready = true;   // the saved session has been checked (signed in or not)
     account.user = session ? session.user : null;
     if (event === "PASSWORD_RECOVERY") { account.recovery = true; navigate("reset"); }
     if (account.user && account.user.id !== was) {
       // Defer database calls out of the auth callback, as Supabase recommends.
       setTimeout(() => loadCloud().then(() => { renderAcct(); render(); }), 0);
     } else if (!account.user && was) {
-      Object.assign(account, { profile: null, teams: [], activeTeamId: null, trades: [], watch: new Set(), loaded: false });
+      Object.assign(account, { profile: null, teams: [], activeTeamId: null, trades: [], watch: new Set(), loaded: false, isAdmin: false });
       clearSettingsCaches(); renderAcct(); render();
     }
     renderAcct();
+    if (firstCheck && !account.user && ["account", "write"].includes(state.page)) render();
   });
 }
 
@@ -1909,6 +1922,7 @@ async function onAuthSubmit(e) {
 // ---------------------------------------------------------------- account page
 function renderAccount() {
   if (!sb) { $("#page").innerHTML = noAuth(); return; }
+  if (!account.ready) { $("#page").innerHTML = `<p class="loading">Loading your account…</p>`; return; }
   if (!signedIn()) { navigate("login"); return; }
   if (!account.loaded) { $("#page").innerHTML = `<p class="loading">Loading your account…</p>`; return; }
   const pr = account.profile, ls = leagueSettings();
@@ -1940,6 +1954,7 @@ function renderAccount() {
         </form>
         <div class="section-head"><h2>Account</h2></div>
         <div class="panel panel-pad acct-actions">
+          ${account.isAdmin ? `<a class="btn primary" href="#write">Write a blog post</a>` : ""}
           <a class="btn" href="#reset">Change password</a>
           <button type="button" class="btn" data-action="logout">Log out</button>
           <details class="danger"><summary>Delete account</summary>
@@ -2023,5 +2038,301 @@ Object.assign(ACTIONS, {
     if (error) return toast(friendlyError(error), "bad");
     account.trades = account.trades.filter(x => x.id !== el.dataset.id); toast("Trade deleted"); render();
   },
+});
+// ================================================================== NEWS + BLOG
+// News: public RSS headlines collected by build.py (headline, source, short summary, link to the original).
+// Blog: posts stored in Supabase; anyone can read published posts, only admins can write.
+const news = { source: "all", q: "", mine: false };
+const blog = { posts: null, current: null, editing: null, list: null, preview: false };
+
+function timeAgo(iso) {
+  const s = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (s < 3600) return `${Math.max(1, Math.round(s / 60))}m ago`;
+  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
+  return `${Math.round(s / 86400)}d ago`;
+}
+function fmtDate(iso) { return iso ? new Date(iso).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }) : ""; }
+function slugify(t) { return String(t || "").toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80).replace(/-+$/, ""); }
+function postPath(slug) { return CLEAN ? `/blog/${slug}/` : "#blog"; }
+// Markdown -> safe HTML. Raw HTML is escaped; DOMPurify removes anything unsafe that's left.
+function mdToHtml(md) {
+  if (!window.marked || !window.DOMPurify) return `<p>${esc(md || "")}</p>`;
+  const html = window.marked.parse(String(md || "").replace(/&/g, "&amp;").replace(/</g, "&lt;"), { gfm: true, breaks: false });
+  return window.DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
+}
+if (window.DOMPurify) window.DOMPurify.addHook("afterSanitizeAttributes", n => {
+  if (n.tagName === "A" && /^https?:/i.test(n.getAttribute("href") || "")) { n.setAttribute("target", "_blank"); n.setAttribute("rel", "noopener"); }
+  if (n.tagName === "IMG") { n.setAttribute("loading", "lazy"); if (!n.getAttribute("alt")) n.setAttribute("alt", ""); }
+});
+
+function headlineRow(it, compact) {
+  const players = (it.players || []).map(id => byId.get(id)).filter(Boolean);
+  return `<article class="news-item${compact ? " compact" : ""}">
+    <div class="news-meta"><span class="news-src">${esc(it.source)}</span><span>${esc(timeAgo(it.time))}</span></div>
+    <h3 class="news-title"><a href="${esc(it.link)}" target="_blank" rel="noopener nofollow">${esc(it.title)}</a></h3>
+    ${!compact && it.summary ? `<p class="news-sum">${esc(it.summary)}</p>` : ""}
+    ${players.length ? `<div class="news-players">${players.map(p => `<button type="button" class="chip" data-pid="${esc(p.id)}">${esc(p.name)} <small>${p.pos} · ${esc(p.team)}</small></button>`).join("")}</div>` : ""}
+  </article>`;
+}
+
+async function loadPosts(force) {
+  if (blog.posts && !force) return blog.posts;
+  blog.posts = (D.posts || []).slice();
+  if (sb) {
+    const { data, error } = await sb.from("posts").select("id,slug,title,excerpt,cover_url,tags,author_name,published_at,updated_at,status")
+      .eq("status", "published").order("published_at", { ascending: false }).limit(200);
+    if (!error && data) blog.posts = data;
+  }
+  return blog.posts;
+}
+function postCard(p, big) {
+  return `<a class="panel post-card${big ? " big" : ""}" href="${postPath(p.slug)}" data-post="${esc(p.slug)}">
+    ${p.cover_url ? `<span class="post-cover" style="background-image:url('${esc(p.cover_url)}')" role="img" aria-label=""></span>` : `<span class="post-cover blank" aria-hidden="true"></span>`}
+    <span class="post-card-body"><span class="post-meta">${esc(fmtDate(p.published_at))}${p.author_name ? ` · ${esc(p.author_name)}` : ""}</span>
+      <span class="post-card-title">${esc(p.title)}</span>${p.excerpt ? `<span class="post-card-ex">${esc(p.excerpt)}</span>` : ""}
+      ${(p.tags || []).length ? `<span class="post-tags">${p.tags.map(t => `<span class="tag mid">${esc(t)}</span>`).join("")}</span>` : ""}</span></a>`;
+}
+
+// ---------------------------------------------------------------- news page
+function renderNews() {
+  const all = D.news || [];
+  const sources = [...new Set(all.map(i => i.source))];
+  const mineIds = new Set([...(roster().example ? [] : roster().ids), ...account.watch]);
+  const q = news.q.trim().toLowerCase();
+  const list = all.filter(i => (news.source === "all" || i.source === news.source)
+    && (!news.mine || (i.players || []).some(id => mineIds.has(id)))
+    && (!q || (i.title + " " + i.summary).toLowerCase().includes(q)));
+  $("#page").innerHTML = `
+    ${pageHead("News", "Fantasy football news", "The latest headlines from around the web, refreshed every few hours. Click a headline to read it at the source, or a player to see his numbers.")}
+    <section class="section" id="newsPosts"></section>
+    <div class="controls">
+      <div class="seg seg-wrap" role="group" aria-label="Source">${["all", ...sources].map(src => `<button type="button" data-action="newsSrc" data-v="${esc(src)}" aria-pressed="${news.source === src}">${src === "all" ? "All" : esc(src)}</button>`).join("")}</div>
+      <label class="check"><input id="newsMine" type="checkbox" ${news.mine ? "checked" : ""}> My players</label>
+      <input id="newsSearch" type="search" placeholder="Search headlines" aria-label="Search headlines" value="${esc(news.q)}">
+    </div>
+    ${news.mine && !mineIds.size ? `<div class="panel panel-pad">Add players to <a href="#my-team">My Team</a> or your watchlist to filter news to them.</div>` : ""}
+    <div class="panel news-list">${list.length ? list.map(i => headlineRow(i)).join("") : `<p class="empty">No headlines match.</p>`}</div>
+    <p class="method-link">Headlines and summaries belong to their publishers and link to the original articles. Sources: ${sources.map(esc).join(", ")}.</p>`;
+  loadPosts().then(posts => {
+    const box = $("#newsPosts"); if (!box || !posts.length) return;
+    box.innerHTML = `<div class="section-head"><h2>From The Sports Mattress</h2><a href="#blog">All articles →</a></div>
+      <div class="post-grid">${posts.slice(0, 3).map(p => postCard(p)).join("")}</div>`;
+    cleanLinks(box);
+  });
+}
+
+// ---------------------------------------------------------------- blog index + post
+function renderBlog() {
+  $("#page").innerHTML = `
+    <div class="pro-head">${pageHead("Blog", "The Sports Mattress blog", "Articles, rankings and advice from The Sports Mattress.")}
+      ${account.isAdmin ? `<a class="btn primary" href="#write">Write a post</a>` : ""}</div>
+    <div id="blogList"><p class="loading">Loading articles…</p></div>`;
+  loadPosts().then(posts => {
+    const box = $("#blogList"); if (!box) return;
+    box.innerHTML = posts.length ? `<div class="post-grid">${posts.map((p, i) => postCard(p, i === 0)).join("")}</div>`
+      : `<div class="panel panel-pad empty">No articles yet. Check back soon${account.isAdmin ? `, or <a href="#write">write the first one</a>` : ""}.</div>`;
+    cleanLinks(box);
+  });
+}
+
+async function renderPost() {
+  const slug = state.slug;
+  $("#page").innerHTML = `<p class="loading">Loading article…</p>`;
+  let post = null;
+  if (sb) {
+    const { data } = await sb.from("posts").select("*").eq("slug", slug).maybeSingle();
+    post = data;
+  }
+  if (!post) post = (D.posts || []).find(p => p.slug === slug) || null;
+  if (state.page !== "post" || state.slug !== slug) return;
+  if (!post) return renderNotFound();
+  blog.current = post;
+  document.title = `${post.title} · The Sports Mattress`;
+  const url = (window.TSM_SB && window.TSM_SB.site ? window.TSM_SB.site : location.origin + "/") + `blog/${post.slug}/`;
+  const share = encodeURIComponent(url), text = encodeURIComponent(post.title);
+  $("#page").innerHTML = `
+    <article class="post">
+      ${post.status === "draft" ? `<div class="panel panel-pad off-note"><strong>Draft.</strong> <span class="muted">Only admins can see this until it's published.</span></div>` : ""}
+      <a href="#blog" class="post-back">← All articles</a>
+      <h1 class="post-title">${esc(post.title)}</h1>
+      ${post.excerpt ? `<p class="post-dek">${esc(post.excerpt)}</p>` : ""}
+      <div class="post-byline"><span>${esc(post.author_name || "The Sports Mattress")}</span><span>${esc(fmtDate(post.published_at || post.created_at))}</span>
+        ${(post.tags || []).map(t => `<span class="tag mid">${esc(t)}</span>`).join("")}</div>
+      ${post.cover_url ? `<img class="post-hero" src="${esc(post.cover_url)}" alt="">` : ""}
+      <div class="post-body">${mdToHtml(post.body_md)}</div>
+      <div class="post-share"><span class="muted">Share:</span>
+        <a class="btn small" href="https://twitter.com/intent/tweet?url=${share}&text=${text}" target="_blank" rel="noopener">X / Twitter</a>
+        <a class="btn small" href="https://www.facebook.com/sharer/sharer.php?u=${share}" target="_blank" rel="noopener">Facebook</a>
+        <a class="btn small" href="https://www.reddit.com/submit?url=${share}&title=${text}" target="_blank" rel="noopener">Reddit</a>
+        <button type="button" class="btn small" data-action="copyLink" data-url="${esc(url)}">Copy link</button>
+        ${account.isAdmin ? `<button type="button" class="btn small primary" data-action="editPost" data-id="${post.id}">Edit</button>` : ""}</div>
+    </article>`;
+  cleanLinks($("#page"));
+}
+
+function renderNotFound() {
+  $("#page").innerHTML = `${pageHead("404", "Page not found", "That page doesn't exist or has moved.")}
+    <p><a class="btn primary" href="#home">Go to this week's matchups</a></p>
+    <p class="muted">Or try the <a href="#trade">Trade Analyzer</a>, <a href="#start-sit">Start / Sit</a> or the <a href="#news">latest news</a>.</p>`;
+  cleanLinks($("#page"));
+}
+
+// ---------------------------------------------------------------- write (admins)
+async function renderWrite() {
+  if (!sb) { $("#page").innerHTML = noAuth(); return; }
+  if (!account.ready) { $("#page").innerHTML = `<p class="loading">Loading…</p>`; return; }
+  if (!signedIn()) { navigate("login"); return; }
+  if (!account.loaded) { $("#page").innerHTML = `<p class="loading">Loading…</p>`; return; }
+  if (!account.isAdmin) {
+    $("#page").innerHTML = `${pageHead("Blog", "Write", "")}<div class="panel panel-pad">Only site admins can write posts. If you should have access, contact <a href="mailto:${CONTACT}">${CONTACT}</a>.</div>`;
+    return;
+  }
+  if (!blog.list) {
+    const { data, error } = await sb.from("posts").select("*").order("updated_at", { ascending: false });
+    blog.list = error ? [] : data;
+  }
+  const e = blog.editing;
+  const listHtml = blog.list.map(p => `<div class="list-row">
+      <div><b>${esc(p.title)}</b> <span class="badge ${p.status === "published" ? "ok" : "q"}">${p.status === "published" ? "Published" : "Draft"}</span>
+        <small class="muted" style="display:block">/blog/${esc(p.slug)}/ · updated ${esc(timeAgo(p.updated_at))}</small></div>
+      <div class="row-actions"><button type="button" class="btn small" data-action="editPost" data-id="${p.id}">Edit</button>
+        ${p.status === "published" ? `<a class="btn small" href="${postPath(p.slug)}">View</a>` : ""}</div></div>`).join("");
+  if (!e) {
+    $("#page").innerHTML = `
+      <div class="pro-head">${pageHead("Blog", "Write", "Write, save drafts and publish articles. Published posts appear on the blog right away.")}
+        <button type="button" class="btn primary" data-action="newPost">New post</button></div>
+      <div class="panel list">${listHtml || `<p class="empty">No posts yet. Click <b>New post</b> to write your first.</p>`}</div>`;
+    cleanLinks($("#page"));
+    return;
+  }
+  $("#page").innerHTML = `
+    <div class="pro-head">${pageHead("Blog", e.id ? "Edit post" : "New post", e.status === "published" ? `Live at /blog/${esc(e.slug)}/` : "Draft: only admins can see it until you publish.")}
+      <button type="button" class="btn" data-action="closeEditor">← All posts</button></div>
+    <form class="editor" id="postForm" novalidate>
+      <div class="editor-main panel panel-pad">
+        <div class="field"><label for="peTitle">Title</label><input id="peTitle" type="text" maxlength="140" value="${esc(e.title || "")}" placeholder="A headline people will click"></div>
+        <div class="field"><label for="peSlug">Address</label><div class="slug-row"><span class="muted">sportsmattress.io/blog/</span><input id="peSlug" type="text" maxlength="80" value="${esc(e.slug || "")}" placeholder="auto-from-title"></div></div>
+        <div class="field"><label for="peExcerpt">Summary <small class="muted">(shown on cards and in Google, about 1–2 sentences)</small></label><textarea id="peExcerpt" rows="2" maxlength="300">${esc(e.excerpt || "")}</textarea></div>
+        <div class="field"><label>Article</label>
+          <div class="md-toolbar" role="toolbar" aria-label="Formatting">
+            <button type="button" data-md="bold" title="Bold"><b>B</b></button><button type="button" data-md="italic" title="Italic"><i>I</i></button>
+            <button type="button" data-md="h2" title="Heading">H2</button><button type="button" data-md="h3" title="Subheading">H3</button>
+            <button type="button" data-md="link" title="Link">Link</button><button type="button" data-md="ul" title="Bullet list">• List</button>
+            <button type="button" data-md="ol" title="Numbered list">1. List</button><button type="button" data-md="quote" title="Quote">“ Quote</button>
+            <label class="md-upload" title="Insert image">Image<input type="file" accept="image/*" id="peImage" hidden></label>
+            <span class="md-tabs"><button type="button" data-action="mdTab" data-v="write" aria-pressed="${!blog.preview}">Write</button><button type="button" data-action="mdTab" data-v="preview" aria-pressed="${blog.preview}">Preview</button></span>
+          </div>
+          <textarea id="peBody" rows="22" ${blog.preview ? "hidden" : ""} placeholder="Write your article. **bold**, *italic*, ## Heading, - bullet, [link](https://...)">${esc(e.body_md || "")}</textarea>
+          <div class="post-body md-preview panel-pad" id="pePreview" ${blog.preview ? "" : "hidden"}>${blog.preview ? mdToHtml(e.body_md) : ""}</div>
+        </div>
+      </div>
+      <aside class="editor-side">
+        <div class="panel panel-pad editor-box">
+          <div class="field"><label for="peCover">Cover image</label>
+            ${e.cover_url ? `<img class="cover-prev" src="${esc(e.cover_url)}" alt="">` : ""}
+            <input id="peCover" type="file" accept="image/*"><small class="muted">JPG, PNG or WebP up to 5 MB. Wide images (1200×630) look best when shared.</small>
+            ${e.cover_url ? `<button type="button" class="link-btn" data-action="removeCover" style="font-size:13px">Remove cover</button>` : ""}</div>
+          <div class="field"><label for="peTags">Tags <small class="muted">(comma separated)</small></label><input id="peTags" type="text" value="${esc((e.tags || []).join(", "))}" placeholder="Rankings, Week 13, Waivers"></div>
+          <div class="field"><label for="peAuthor">Author</label><input id="peAuthor" type="text" maxlength="60" value="${esc(e.author_name || displayName())}"></div>
+        </div>
+        <div class="panel panel-pad editor-box">
+          <p class="auth-msg" id="authMsg" role="alert"></p>
+          <button type="button" class="btn primary wide" data-action="savePost" data-publish="1">${e.status === "published" ? "Update published post" : "Publish"}</button>
+          <button type="button" class="btn wide" data-action="savePost" data-publish="0">${e.status === "published" ? "Unpublish (back to draft)" : "Save draft"}</button>
+          ${e.id ? `<button type="button" class="btn wide danger-ghost" data-action="deletePost" data-id="${e.id}">Delete post</button>` : ""}
+        </div>
+      </aside>
+    </form>`;
+}
+function editorValues() {
+  const e = blog.editing;
+  e.title = $("#peTitle").value.trim();
+  e.slug = slugify($("#peSlug").value || e.title);
+  e.excerpt = $("#peExcerpt").value.trim();
+  if ($("#peBody")) e.body_md = $("#peBody").value;
+  e.tags = $("#peTags").value.split(",").map(t => t.trim()).filter(Boolean).slice(0, 8);
+  e.author_name = $("#peAuthor").value.trim();
+  return e;
+}
+async function uploadImage(file, folder) {
+  if (!file) return null;
+  if (file.size > 5 * 1024 * 1024) { toast("Images must be 5 MB or smaller", "bad"); return null; }
+  const ext = (file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const path = `${folder}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+  const { error } = await sb.storage.from("blog").upload(path, file, { contentType: file.type, upsert: false });
+  if (error) { toast("Upload failed: " + friendlyError(error), "bad"); return null; }
+  return sb.storage.from("blog").getPublicUrl(path).data.publicUrl;
+}
+function mdInsert(kind) {
+  const ta = $("#peBody"); if (!ta) return;
+  const [a, b] = [ta.selectionStart, ta.selectionEnd], sel = ta.value.slice(a, b);
+  const wrap = { bold: ["**", "**", "bold text"], italic: ["*", "*", "italic text"], link: ["[", "](https://)", "link text"] }[kind];
+  const line = { h2: "## ", h3: "### ", ul: "- ", ol: "1. ", quote: "> " }[kind];
+  let ins, caret;
+  if (wrap) { ins = wrap[0] + (sel || wrap[2]) + wrap[1]; caret = a + ins.length; }
+  else { const start = ta.value.lastIndexOf("\n", a - 1) + 1; ta.setSelectionRange(start, start); ins = line; caret = b + line.length; ta.setRangeText(ins, start, start, "end"); ta.focus(); ta.setSelectionRange(caret, caret); return; }
+  ta.setRangeText(ins, a, b, "end"); ta.focus(); ta.setSelectionRange(caret, caret);
+}
+
+Object.assign(ACTIONS, {
+  newsSrc: el => { news.source = el.dataset.v; render(); },
+  copyLink: el => {
+    const u = el.dataset.url;
+    (navigator.clipboard ? navigator.clipboard.writeText(u) : Promise.reject()).then(() => toast("Link copied"), () => toast(u));
+  },
+  newPost: () => { blog.editing = { status: "draft", tags: [] }; blog.preview = false; navigate("write"); render(); },
+  editPost: async el => {
+    const { data, error } = await sb.from("posts").select("*").eq("id", el.dataset.id).single();
+    if (error) return toast(friendlyError(error), "bad");
+    blog.editing = data; blog.preview = false; navigate("write"); render(); window.scrollTo(0, 0);
+  },
+  closeEditor: () => { blog.editing = null; render(); },
+  mdTab: el => { editorValues(); blog.preview = el.dataset.v === "preview"; render(); },
+  removeCover: () => { editorValues(); blog.editing.cover_url = null; render(); },
+  savePost: async el => {
+    const e = editorValues(), msg = $("#authMsg"), say = t => { msg.textContent = t; msg.className = "auth-msg bad"; };
+    const publish = el.dataset.publish === "1";
+    if (!e.title) return say("Add a title.");
+    if (!e.slug) return say("Add an address (letters and numbers).");
+    if (publish && !e.body_md.trim()) return say("Write the article before publishing.");
+    const status = publish ? "published" : "draft";
+    const row = { title: e.title, slug: e.slug, excerpt: e.excerpt || null, body_md: e.body_md || "", tags: e.tags,
+      author_name: e.author_name || null, cover_url: e.cover_url || null, status };
+    el.disabled = true;
+    const q = e.id ? sb.from("posts").update(row).eq("id", e.id).select().single() : sb.from("posts").insert(row).select().single();
+    const { data, error } = await q;
+    el.disabled = false;
+    if (error) return say(/duplicate|unique/i.test(error.message) ? "Another post already uses that address. Change it and try again." : friendlyError(error));
+    blog.editing = data; blog.list = null; blog.posts = null;
+    toast(publish ? "Published! It's live on the blog." : e.status === "published" ? "Moved back to drafts" : "Draft saved");
+    render();
+  },
+  deletePost: async el => {
+    if (el.dataset.sure !== "1") { el.dataset.sure = "1"; el.textContent = "Tap again to delete"; setTimeout(() => { if (el.isConnected) { el.dataset.sure = ""; el.textContent = "Delete post"; } }, 3000); return; }
+    const { error } = await sb.from("posts").delete().eq("id", el.dataset.id);
+    if (error) return toast(friendlyError(error), "bad");
+    blog.editing = null; blog.list = null; blog.posts = null; toast("Post deleted"); render();
+  },
+});
+
+// Editor inputs: toolbar, uploads and the auto address.
+document.addEventListener("click", e => { const b = e.target.closest("[data-md]"); if (b) { e.preventDefault(); mdInsert(b.dataset.md); } });
+document.addEventListener("change", async e => {
+  if (e.target.id === "peCover" && e.target.files[0]) {
+    editorValues(); toast("Uploading cover…");
+    const url = await uploadImage(e.target.files[0], "covers"); if (url) { blog.editing.cover_url = url; render(); toast("Cover uploaded"); }
+  }
+  if (e.target.id === "peImage" && e.target.files[0]) {
+    toast("Uploading image…");
+    const url = await uploadImage(e.target.files[0], "images");
+    const ta = $("#peBody");
+    if (url && ta) { ta.setRangeText(`\n![](${url})\n`, ta.selectionStart, ta.selectionEnd, "end"); toast("Image added"); }
+  }
+});
+document.addEventListener("input", e => {
+  if (e.target.id === "peTitle" && blog.editing && !blog.editing.id) { const s = $("#peSlug"); if (s && !s.dataset.touched) s.value = slugify(e.target.value); }
+  if (e.target.id === "peSlug") e.target.dataset.touched = "1";
+  if (e.target.id === "newsSearch") { news.q = e.target.value; renderSoon(); }
+  if (e.target.id === "newsMine") { news.mine = e.target.checked; render(); }
 });
 })();
