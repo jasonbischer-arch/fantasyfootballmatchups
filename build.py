@@ -119,7 +119,7 @@ COLUMNS = {
 STALE_SOURCES: list[str] = []      # files we fell back to an older copy of (reported in the data)
 
 
-def fetch(url: str, name: str, max_age_hours: float = 6, attempts: int = 4) -> Path:
+def fetch(url: str, name: str, max_age_hours: float = 6, attempts: int = 4, user_agent: str = "fantasy-matchups-builder") -> Path:
     """Download url into the cache (reused if fresh).
 
     Retries with growing waits, because nflverse briefly returns errors while it republishes files.
@@ -130,7 +130,7 @@ def fetch(url: str, name: str, max_age_hours: float = 6, attempts: int = 4) -> P
     path = CACHE / name
     if path.exists() and (dt.datetime.now().timestamp() - path.stat().st_mtime) < max_age_hours * 3600:
         return path
-    req = urllib.request.Request(url, headers={"User-Agent": "fantasy-matchups-builder"})
+    req = urllib.request.Request(url, headers={"User-Agent": user_agent, "Accept": "application/rss+xml, application/xml, text/xml, */*"})
     tmp = path.with_suffix(".part")
     last_err = None
     for i in range(attempts):
@@ -393,6 +393,8 @@ NEWS_FEEDS = [
     ("RotoBaller", "https://www.rotoballer.com/category/nfl/feed"),
 ]
 NEWS_MAX_AGE_HOURS = 96
+# Identify honestly as a feed reader, with a link back to the site (some publishers refuse anonymous scripts).
+FEED_USER_AGENT = "Mozilla/5.0 (compatible; SportsMattressNews/1.0; +https://sportsmattress.io/news/)"
 
 
 def _strip_html(text: str) -> str:
@@ -412,7 +414,10 @@ def load_news(players: list[dict]) -> list[dict]:
     items, seen = [], set()
     for source, url in NEWS_FEEDS:
         try:
-            path = fetch(url, "news_" + _re.sub(r"[^a-z0-9]+", "_", source.lower()) + ".xml", max_age_hours=0.5, attempts=2)
+            path = fetch(url, "news_" + _re.sub(r"[^a-z0-9]+", "_", source.lower()) + ".xml", max_age_hours=0.5, attempts=2,
+                         user_agent=FEED_USER_AGENT)
+            if path.stat().st_size < 200:
+                raise ValueError("empty response")
             root = ET.parse(path).getroot()
         except Exception as e:
             print(f"  news feed unavailable ({source}): {e}", file=sys.stderr)
