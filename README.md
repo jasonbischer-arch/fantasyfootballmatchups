@@ -1,7 +1,7 @@
 # The Sports Mattress
 
 Fantasy football matchup charts and tools that rebuild themselves every week.
-Live at **https://jasonbischer-arch.github.io/fantasyfootballmatchups/**
+Live at **https://sportsmattress.io/**
 
 The logo is a quilted mattress whose panels run from red (tough matchup) to green (great matchup),
 the same scale used across the site.
@@ -68,13 +68,16 @@ rather than double-clicking the file.
 - `template/index.html` is the page shell; `template/assets/app.js` renders every page; `app.css` is the design;
   `logo.svg` and `mark.svg` are the logo and icon.
 
-## Launch details
+## Domain and SEO
 
-- `SITE_URL` in `build.py` is the public address used for link previews, `sitemap.xml`, `robots.txt` and the 404 page.
-  Change it if you move to a custom domain.
-- `template/assets/og.png` is the image shown when the site is shared (1200×630); `icon-180.png` and `icon-32.png`
-  are the phone and browser icons.
-- About, How It Works, Privacy and Terms pages live at `#about`, `#how-it-works`, `#privacy` and `#terms`.
+- The site is served at **https://sportsmattress.io/** (Porkbun DNS → GitHub Pages; `www` redirects to the bare domain).
+  `SITE_URL` in `build.py` must match it.
+- Every page has a real URL (`/qb/`, `/trade/`, `/players/` …). `build.py` writes one HTML file per page with its own
+  title, description, canonical link, Open Graph / Twitter tags and crawlable fallback content; old `/#page` links
+  redirect. Account pages (`/login/`, `/account/` …) are `noindex`.
+- `sitemap.xml`, `robots.txt`, a real `404.html`, `favicon.ico`, `site.webmanifest` and JSON-LD structured data
+  (WebSite, Organization, WebApplication on the home page; breadcrumbs elsewhere) are generated on every build.
+- `template/assets/og.png` is the share image; `icon-*.png` are the app icons.
 
 ## Tweaking
 

@@ -30,7 +30,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 # Public address of the site (used for share previews, sitemap and the 404 redirect).
 # Change this if you move to a custom domain, e.g. "https://thesportsmattress.com/".
-SITE_URL = "https://jasonbischer-arch.github.io/fantasyfootballmatchups/"
+SITE_URL = "https://sportsmattress.io/"
 # Supabase project for accounts. The anon key is meant to be public: row level security in the
 # database limits every signed-in user to their own rows.
 SUPABASE_URL = "https://wwqyqvkuaxchfcunajwt.supabase.co"
@@ -744,11 +744,105 @@ def build_players(plog, depth, injuries, opponent, target, snaps, pbp_player, te
 
 # --------------------------------------------------------------------------- output
 
-def render_html(downloads: bool, build_id: str) -> str:
+# Every public page gets its own URL, title, description and crawlable fallback content.
+# (route, title, description, h1, intro, indexable)
+def site_routes(data: dict) -> list[tuple]:
+    wk, season = data["week"], data["season"]
+    pos_names = {"qb": "Quarterback", "rb": "Running Back", "wr": "Wide Receiver", "te": "Tight End"}
+    routes = [("home", "The Sports Mattress · Fantasy Football Matchups, Start/Sit and Trade Analyzer",
+               f"Free fantasy football tools for Week {wk}: color-coded matchup charts, start/sit calls, a trade analyzer, "
+               "snap and target share, strength of schedule and kickoff weather. Updated every morning.",
+               f"Week {wk} fantasy football matchups",
+               "Every NFL defense ranked by the fantasy points it allows to quarterbacks, running backs, receivers and tight "
+               "ends, plus start/sit calls, a trade analyzer, usage stats and rest-of-season schedules.", True)]
+    for slug, name in pos_names.items():
+        P = slug.upper()
+        routes.append((slug, f"Week {wk} {P} Matchups: Fantasy Points Allowed by Defense · The Sports Mattress",
+                       f"Week {wk} {name.lower()} matchup chart: every defense ranked by fantasy points allowed to {P}s, with "
+                       f"per-game stats allowed, last week's results, team totals and kickoff weather. PPR, half PPR and standard.",
+                       f"Week {wk} {P} matchups",
+                       f"How each team's {name.lower()}s line up against this week's opponent, color-coded from tough to great.", True))
+    routes += [
+        ("start-sit", "Start/Sit Tool: Compare Two Players · The Sports Mattress",
+         f"Who should you start in Week {wk}? Compare any two players with matchup-adjusted projections, usage, injuries, "
+         "team totals and a clear verdict.", "Start / Sit", "Compare any two players, at any position, and get a verdict with the reasons.", True),
+        ("my-team", "Fantasy Lineup Optimizer · The Sports Mattress",
+         f"Add your fantasy roster and get your best Week {wk} lineup, ranked by matchup-adjusted projection. Supports 3 WR, 2 flex and superflex.",
+         "My Team", "Build your roster and get this week's best lineup.", True),
+        ("trade", "Fantasy Football Trade Analyzer · The Sports Mattress",
+         "Analyze any fantasy football trade: rest-of-season and playoff value, buy-low and sell-high timing, hot and cold form, "
+         "usage trends and strength of schedule for every player.", "Trade Analyzer",
+         "Put in a trade and see who wins it, and whether now is the time to buy or sell.", True),
+        ("players", "Player Usage: Snap Share, Target Share and WOPR · The Sports Mattress",
+         f"{season} fantasy football usage stats: snap share, target share, air yards share, WOPR, rush share and red-zone "
+         "opportunities for every fantasy-relevant player.", "Player usage", "Snap share, target share, air yards, WOPR and red-zone chances.", True),
+        ("schedule", "Fantasy Football Strength of Schedule by Position · The Sports Mattress",
+         "Rest-of-season strength of schedule for QB, RB, WR and TE: every remaining opponent colored by fantasy points allowed, "
+         "with next-4 and fantasy playoff averages.", "Strength of schedule", "Who each team faces the rest of the way, by position.", True),
+        ("teams", "NFL Team Tendencies: Pace, Pass Rate and Projected Points · The Sports Mattress",
+         f"Week {wk} NFL team tendencies for fantasy football: projected points from betting lines, plays per game, pass rate, "
+         "neutral pass rate and pass rate over expected.", "Team tendencies", "Which offenses run the most plays, throw the most and are projected to score.", True),
+        ("about", "About · The Sports Mattress", "The Sports Mattress is a free fantasy football research site built around weekly matchup charts.",
+         "About", "Matchups you can sleep on.", True),
+        ("how-it-works", "How It Works: Methodology · The Sports Mattress",
+         "How The Sports Mattress calculates matchup ranks, projections, start/sit calls, trade values, usage stats and strength of schedule.",
+         "How It Works", "What every number on the site means and how it's calculated.", True),
+        ("privacy", "Privacy · The Sports Mattress", "What The Sports Mattress stores, why, and how to delete it.", "Privacy", "", True),
+        ("terms", "Terms of Use · The Sports Mattress", "Terms of use for The Sports Mattress.", "Terms of Use", "", True),
+    ]
+    for slug, t in (("login", "Log in"), ("signup", "Create account"), ("forgot", "Reset password"), ("reset", "Set new password"), ("account", "Your account")):
+        routes.append((slug, f"{t} · The Sports Mattress", "Your free The Sports Mattress account.", t, "", False))
+    return routes
+
+
+def esc_html(text: str) -> str:
+    return (text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+
+def render_html(downloads: bool, build_id: str, clean: bool = False, base: str = "", route=None, routes=None) -> str:
     html = (ROOT / "template" / "index.html").read_text()
-    html = html.replace("__BUILD__", build_id).replace("__SITE_URL__", SITE_URL)
+    route = route or ("home", "The Sports Mattress", "", "", "", True)
+    slug, title, desc, h1, intro, indexable = route
+    url = SITE_URL if slug == "home" else f"{SITE_URL}{slug}/"
+    html = html.replace("__TITLE__", esc_html(title)).replace("__DESC__", esc_html(desc)).replace("__CANONICAL__", url)
+    html = html.replace("<!--__ROBOTS__-->", "" if indexable else '<meta name="robots" content="noindex, follow">')
+    head_extra = ""
+    if slug == "home":
+        ld = {"@context": "https://schema.org", "@graph": [
+            {"@type": "WebSite", "@id": SITE_URL + "#website", "name": "The Sports Mattress", "alternateName": "Sports Mattress",
+             "url": SITE_URL, "description": desc, "inLanguage": "en-US", "publisher": {"@id": SITE_URL + "#org"}},
+            {"@type": "Organization", "@id": SITE_URL + "#org", "name": "The Sports Mattress", "url": SITE_URL,
+             "logo": {"@type": "ImageObject", "url": SITE_URL + "assets/icon-512.png", "width": 512, "height": 512}},
+            {"@type": "WebApplication", "name": "The Sports Mattress", "url": SITE_URL, "applicationCategory": "SportsApplication",
+             "operatingSystem": "Any", "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"},
+             "description": "Fantasy football matchup charts, start/sit tool, trade analyzer and usage stats."}]}
+        head_extra = '<script type="application/ld+json">' + json.dumps(ld, separators=(",", ":")).replace("</", "<\\/") + "</script>"
+    elif indexable:
+        crumbs = {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [
+            {"@type": "ListItem", "position": 1, "name": "Home", "item": SITE_URL},
+            {"@type": "ListItem", "position": 2, "name": h1, "item": url}]}
+        head_extra = '<script type="application/ld+json">' + json.dumps(crumbs, separators=(",", ":")) + "</script>"
+    html = html.replace("<!--__HEAD_EXTRA__-->", head_extra)
+    # Crawlable fallback shown until the app renders (and to clients without JavaScript).
+    links = "".join(f'<li><a href="{base or "/"}{"" if r[0] == "home" else r[0] + "/"}">{esc_html(r[3])}</a></li>'
+                    for r in (routes or []) if r[5] and r[0] not in ("privacy", "terms")) if clean else ""
+    fallback = (f'<div class="seo-fallback"><h1>{esc_html(h1)}</h1>' + (f"<p>{esc_html(intro)}</p>" if intro else "")
+                + '<p class="loading">Loading this week\'s data…</p>' + (f'<ul class="seo-links">{links}</ul>' if links else "")
+                + "<noscript><p>The Sports Mattress needs JavaScript to show its charts and tools.</p></noscript></div>")
+    html = html.replace("<!--__FALLBACK__-->", fallback)
+    html = html.replace("__BUILD__", build_id).replace("__SITE_URL__", SITE_URL).replace("__BASE__", base)
     html = html.replace("/*__SUPABASE__*/null", json.dumps({"url": SUPABASE_URL, "key": SUPABASE_ANON_KEY, "site": SITE_URL}))
+    html = html.replace("/*__CLEAN__*/false", "true" if clean else "false")
+    html = html.replace("/*__TITLES__*/null", json.dumps({r[0]: r[1] for r in (routes or [])}).replace("</", "<\\/"))
     return html.replace("/*__DOWNLOADS__*/true", "true" if downloads else "false")
+
+
+def write_ico(png_path: Path, ico_path: Path) -> None:
+    """favicon.ico holding one 32x32 PNG (supported by every current browser)."""
+    import struct
+    png = png_path.read_bytes()
+    header = struct.pack("<HHH", 0, 1, 1) + struct.pack("<BBBBHHII", 32, 32, 0, 0, 1, 32, len(png), 6 + 16)
+    ico_path.write_bytes(header + png)
 
 
 def write_site(data: dict, preview: Path | None) -> None:
@@ -757,23 +851,46 @@ def write_site(data: dict, preview: Path | None) -> None:
     payload = json.dumps(data, separators=(",", ":"))
     (OUT / "data.json").write_text(payload)
     shutil.copytree(ROOT / "template" / "assets", OUT / "assets", dirs_exist_ok=True)
-    (OUT / "index.html").write_text('<!doctype html>\n<html lang="en">\n' + render_html(True, build_id) + "\n</html>\n")
+    routes = site_routes(data)
+    for r in routes:
+        page = '<!doctype html>\n<html lang="en">\n' + render_html(True, build_id, clean=True, base="/", route=r, routes=routes) + "\n</html>\n"
+        target = OUT / "index.html" if r[0] == "home" else OUT / r[0] / "index.html"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(page)
     write_xlsx(data)
+    write_ico(ROOT / "template" / "assets" / "icon-32.png", OUT / "favicon.ico")
+    (OUT / "site.webmanifest").write_text(json.dumps({
+        "name": "The Sports Mattress", "short_name": "Sports Mattress",
+        "description": "Fantasy football matchup charts, start/sit, trade analyzer and usage stats.",
+        "start_url": "/", "scope": "/", "display": "standalone", "background_color": "#111a2a", "theme_color": "#111a2a",
+        "icons": [{"src": "/assets/icon-192.png", "sizes": "192x192", "type": "image/png"},
+                  {"src": "/assets/icon-512.png", "sizes": "512x512", "type": "image/png"},
+                  {"src": "/assets/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}],
+    }, indent=1))
     today = dt.date.today().isoformat()
-    (OUT / "robots.txt").write_text(f"User-agent: *\nAllow: /\nSitemap: {SITE_URL}sitemap.xml\n")
-    (OUT / "sitemap.xml").write_text(
-        '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
-        f"  <url><loc>{SITE_URL}</loc><lastmod>{today}</lastmod><changefreq>weekly</changefreq></url>\n</urlset>\n")
+    (OUT / "robots.txt").write_text(f"User-agent: *\nAllow: /\nDisallow: /account/\n\nSitemap: {SITE_URL}sitemap.xml\n")
+    prio = {"home": "1.0", "trade": "0.9", "qb": "0.9", "rb": "0.9", "wr": "0.9", "te": "0.9", "start-sit": "0.9", "my-team": "0.8",
+            "players": "0.8", "schedule": "0.8", "teams": "0.7"}
+    urls = "".join(f"  <url><loc>{SITE_URL if r[0] == 'home' else SITE_URL + r[0] + '/'}</loc><lastmod>{today}</lastmod>"
+                   f"<changefreq>daily</changefreq><priority>{prio.get(r[0], '0.4')}</priority></url>\n" for r in routes if r[5])
+    (OUT / "sitemap.xml").write_text('<?xml version="1.0" encoding="UTF-8"?>\n'
+                                     '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' + urls + "</urlset>\n")
+    # Real 404 page (GitHub Pages serves it with a 404 status) with links back into the site.
     (OUT / "404.html").write_text(
-        '<!doctype html>\n<html lang="en"><meta charset="utf-8"><title>Page not found · The Sports Mattress</title>'
-        f'<meta http-equiv="refresh" content="0; url={SITE_URL}"><link rel="canonical" href="{SITE_URL}">'
-        f'<body style="font-family:system-ui;background:#111a2a;color:#f2f5fb;padding:40px">'
-        f'<p>That page doesn\'t exist. <a style="color:#ffd966" href="{SITE_URL}">Go to The Sports Mattress</a>.</p></body></html>\n')
-    print(f"Wrote {OUT / 'index.html'}", file=sys.stderr)
+        '<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
+        '<title>Page not found · The Sports Mattress</title><meta name="robots" content="noindex">'
+        '<link rel="icon" href="/favicon.ico" sizes="32x32"><link rel="stylesheet" href="/assets/app.css">'
+        '<style>.nf{max-width:640px;margin:0 auto;padding:80px 20px;display:grid;gap:16px}.nf a.btn{width:fit-content}</style></head>'
+        '<body><main class="nf"><a class="wordmark" href="/" style="text-decoration:none;font-size:34px">The Sports Mattress</a>'
+        '<h1>Page not found</h1><p class="lede">That page doesn\'t exist or has moved.</p>'
+        '<p><a class="btn primary" href="/">Go to this week\'s matchups</a></p>'
+        '<p class="muted">Or try the <a href="/trade/">Trade Analyzer</a>, <a href="/start-sit/">Start / Sit</a> or <a href="/qb/">matchup charts</a>.</p>'
+        "</main></body></html>\n")
+    print(f"Wrote {OUT / 'index.html'} and {len(routes) - 1} more pages", file=sys.stderr)
     if preview:
-        # Body-only copy without download links, for hosts that wrap pages themselves.
+        # Body-only copy without download links, for hosts that wrap pages themselves (uses #routes).
         preview.mkdir(parents=True, exist_ok=True)
-        (preview / "index.html").write_text(render_html(False, build_id))
+        (preview / "index.html").write_text(render_html(False, build_id, clean=False, base="", route=routes[0], routes=routes))
         (preview / "data.json").write_text(payload)
         shutil.copytree(ROOT / "template" / "assets", preview / "assets", dirs_exist_ok=True)
         print(f"Wrote preview to {preview}", file=sys.stderr)

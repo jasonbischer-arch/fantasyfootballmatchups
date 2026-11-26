@@ -15,6 +15,27 @@ const PAGE_TITLES = {
 };
 
 let D = null;                         // data.json
+// On the live site pages have real URLs (/trade/, /players/ ...); the preview uses #trade style.
+const CLEAN = !!window.TSM_CLEAN;
+const BASE = window.TSM_BASE || "";
+const routePath = r => (r === "home" ? "/" : `/${r}/`);
+function isRoute(r) { return PAGES.includes(r) || POS.includes(String(r).toUpperCase()); }
+function currentRoute() {
+  if (CLEAN) return location.pathname.replace(/^\/+|\/+$/g, "").toLowerCase() || "home";
+  return location.hash.slice(1).toLowerCase();
+}
+function navigate(r) {
+  if (CLEAN) { if (location.pathname !== routePath(r)) history.pushState(null, "", routePath(r)); route(true); }
+  else navigate(r);
+}
+// Turn #route links into real paths so search engines can follow them.
+function cleanLinks(root = document) {
+  if (!CLEAN) return;
+  root.querySelectorAll('a[href^="#"]').forEach(a => {
+    const r = a.getAttribute("href").slice(1).toLowerCase();
+    if (r && isRoute(r)) a.setAttribute("href", routePath(r));
+  });
+}
 const byId = new Map();
 const byLabel = new Map();
 const state = {
@@ -148,7 +169,7 @@ function oppText(p) { return p.bye ? "BYE" : `${p.away ? "@" : "vs "}${p.opp}`; 
 
 // ------------------------------------------------------------------ boot
 document.addEventListener("error", e => { if (e.target && e.target.tagName === "IMG") e.target.remove(); }, true);
-fetch("data.json?v=" + encodeURIComponent(window.TSM_BUILD || ""))
+fetch(BASE + "data.json?v=" + encodeURIComponent(window.TSM_BUILD || ""))
   .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
   .then(d => { D = d; boot(); })
   .catch(() => { $("#page").innerHTML = `<p class="empty">This week's data couldn't be loaded. Refresh the page to try again.</p>`; });
@@ -201,20 +222,34 @@ function boot() {
     if (e.target.id === "playerDialog") return closePlayer();
     onClick(e);
   });
-  window.addEventListener("hashchange", () => route(true));
+  if (CLEAN) {
+    // Old #page links (shared before real URLs) move to their real address. Auth links that put
+    // tokens in the hash (#access_token=...) are left for Supabase to read.
+    const h = location.hash.slice(1).toLowerCase();
+    if (h && !h.includes("=") && isRoute(h)) history.replaceState(null, "", routePath(h));
+    window.addEventListener("popstate", () => route(true));
+    document.addEventListener("click", e => {
+      const a = e.target.closest('a[href^="/"]');
+      if (!a || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || a.target === "_blank") return;
+      const r = a.getAttribute("href").replace(/^\/+|\/+$/g, "").toLowerCase() || "home";
+      if (!isRoute(r)) return;
+      e.preventDefault(); navigate(r);
+    });
+    cleanLinks();
+  } else window.addEventListener("hashchange", () => route(true));
   route(false);
 }
 
 // ------------------------------------------------------------------ routing
 function route(scroll) {
-  const h = location.hash.slice(1).toLowerCase();
+  const h = currentRoute();
   if (POS.includes(h.toUpperCase())) { state.page = "matchups"; state.pos = h.toUpperCase(); state.sort = null; }
   else state.page = PAGES.includes(h) ? h : "home";
   if (state.page === "matchups" && !POS.includes(state.pos)) state.pos = "QB";
   document.querySelectorAll("#nav a").forEach(a => {
     if (a.dataset.page === state.page) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   });
-  document.querySelector('#nav a[data-page="matchups"]').href = "#" + state.pos.toLowerCase();
+  document.querySelector('#nav a[data-page="matchups"]').setAttribute("href", CLEAN ? routePath(state.pos.toLowerCase()) : "#" + state.pos.toLowerCase());
   // On narrow screens the menu scrolls sideways; keep the current tab in view.
   const cur = document.querySelector("#nav a[aria-current]"), nav = $("#nav");
   if (cur && nav.scrollWidth > nav.clientWidth) nav.scrollLeft = cur.offsetLeft - (nav.clientWidth - cur.offsetWidth) / 2;
@@ -228,7 +263,10 @@ function render() {
   const fn = { home: renderHome, matchups: renderMatchups, "start-sit": renderStartSit, "my-team": renderMyTeam,
     players: renderPlayers, schedule: renderSchedule, teams: renderTeams, trade: renderTrade, about: renderAbout, "how-it-works": renderHow, privacy: renderPrivacy, terms: renderTerms,
     login: renderLogin, signup: renderSignup, forgot: renderForgot, reset: renderReset, account: renderAccount }[state.page];
-  document.title = `${state.page === "matchups" ? `Week ${D.week} ${state.pos} Matchups` : PAGE_TITLES[state.page]} · The Sports Mattress`;
+  // Use the same search-friendly titles as the pre-built pages.
+  const T = window.TSM_TITLES || {};
+  document.title = T[state.page === "matchups" ? state.pos.toLowerCase() : state.page] ||
+    `${state.page === "matchups" ? `Week ${D.week} ${state.pos} Matchups` : PAGE_TITLES[state.page]} · The Sports Mattress`;
   const active = document.activeElement && document.activeElement.id;
   const caret = active && document.activeElement.selectionStart;
   fn();
@@ -242,6 +280,7 @@ function render() {
   }
   const pd = $("#playerDialog");
   if (pd.open && pd.dataset.player) fillPlayer(byId.get(pd.dataset.player));
+  cleanLinks($("#page")); cleanLinks($("#pdBody"));
 }
 
 function setMenu(open) {
@@ -331,7 +370,7 @@ function onInput(e) {
   }
 }
 const ACTIONS = {
-  pos(el) { location.hash = el.dataset.v.toLowerCase(); },
+  pos(el) { navigate(el.dataset.v.toLowerCase()); },
   plpos(el) { state.pl.pos = el.dataset.v; state.pl.limit = 50; render(); },
   plmore() { state.pl.limit += 50; render(); },
   plall() { state.pl.limit = 1e9; render(); },
@@ -342,7 +381,7 @@ const ACTIONS = {
     const p = byId.get(el.dataset.id); if (!p) return;
     if (ss.example || !ss.a) { ss.a = p; if (ss.example) ss.b = null; }
     else if (ss.a.id !== p.id) ss.b = p;
-    ss.example = false; saveSS(); closePlayer(); location.hash = "start-sit"; if (state.page === "start-sit") render();
+    ss.example = false; saveSS(); closePlayer(); navigate("start-sit"); if (state.page === "start-sit") render();
   },
   roster(el) {
     const p = byId.get(el.dataset.id); if (!p) return;
@@ -593,7 +632,7 @@ function renderMatchups() {
       <td>BYE</td><td>BYE</td><td>BYE</td><td>BYE</td>${cols.filter(c => c.stat).map(() => "<td></td>").join("")}<td></td><td></td></tr>`).join("");
 
   const downloads = window.TSM_DOWNLOADS ? `<div class="controls"><span class="muted" style="font-size:14px">Download spreadsheets:</span>${
-    Object.values(D.formats).map(l => `<a class="btn small" href="Week_${D.week}_Matchups_${l.replace(/ /g, "_")}.xlsx">${l} .xlsx</a>`).join("")}</div>` : "";
+    Object.values(D.formats).map(l => `<a class="btn small" href="${BASE}Week_${D.week}_Matchups_${l.replace(/ /g, "_")}.xlsx">${l} .xlsx</a>`).join("")}</div>` : "";
 
   $("#page").innerHTML = `
     ${pageHead(`Week ${D.week} · ${esc(fmtLabel())}`, `${pos} Matchups`, `How each team's ${POS_NAME[pos]} line up against this week's opponent. ${esc(updatedText())}`)}
@@ -1546,7 +1585,7 @@ function initAuth() {
   sb.auth.onAuthStateChange((event, session) => {
     const was = account.user && account.user.id;
     account.user = session ? session.user : null;
-    if (event === "PASSWORD_RECOVERY") { account.recovery = true; location.hash = "reset"; }
+    if (event === "PASSWORD_RECOVERY") { account.recovery = true; navigate("reset"); }
     if (account.user && account.user.id !== was) {
       // Defer database calls out of the auth callback, as Supabase recommends.
       setTimeout(() => loadCloud().then(() => { renderAcct(); render(); }), 0);
@@ -1563,10 +1602,12 @@ function renderAcct() {
     ? `<a class="acct-chip" href="#account" title="Your account"><span class="acct-av">${esc(initials(displayName()) || "?")}</span><span class="acct-name">${esc(displayName())}</span></a>`
     : `<a class="btn small ghost-inv" href="#login">Log in</a><a class="btn small" href="#signup">Sign up</a>`;
   const a = $("#acct"); if (a) a.innerHTML = sb ? html : "";
+  cleanLinks($("#acct"));
   const m = $("#navAcct");
   if (m) m.innerHTML = !sb ? "" : signedIn()
     ? `<a href="#account">My Account (${esc(displayName())})</a>`
     : `<a href="#login">Log in</a><a href="#signup">Create account</a>`;
+  cleanLinks($("#navAcct"));
 }
 
 // ---------------------------------------------------------------- saved data helpers
@@ -1599,7 +1640,7 @@ async function saveProfile(patch, msg = "Saved") {
   if (error) toast(friendlyError(error), "bad"); else if (msg) toast(msg);
 }
 async function toggleWatch(id) {
-  if (!signedIn()) { toast("Log in to keep a watchlist"); location.hash = "login"; return; }
+  if (!signedIn()) { toast("Log in to keep a watchlist"); navigate("login"); return; }
   if (account.watch.has(id)) {
     account.watch.delete(id);
     const { error } = await sb.from("watchlist").delete().eq("player_id", id);
@@ -1636,7 +1677,7 @@ function authShell(title, lede, body, foot) {
 }
 const noAuth = () => `<p class="auth-msg bad">Accounts aren't available right now. Please try again later.</p>`;
 function renderLogin() {
-  if (signedIn()) { location.hash = "account"; return; }
+  if (signedIn()) { navigate("account"); return; }
   $("#page").innerHTML = authShell("Log in", "Welcome back. Your teams, trades and watchlist are waiting.",
     sb ? `<form class="auth-form" id="loginForm" novalidate>
       <div class="field"><label for="liEmail">Email</label><input id="liEmail" type="email" autocomplete="email" required></div>
@@ -1647,7 +1688,7 @@ function renderLogin() {
     `New here? <a href="#signup">Create a free account</a>`);
 }
 function renderSignup() {
-  if (signedIn()) { location.hash = "account"; return; }
+  if (signedIn()) { navigate("account"); return; }
   $("#page").innerHTML = authShell("Create your account", "Free. Save your teams, trades and watchlist, and stay logged in on this device.",
     sb ? `<form class="auth-form" id="signupForm" novalidate>
       <div class="field"><label for="suName">Display name</label><input id="suName" type="text" maxlength="40" autocomplete="nickname" placeholder="What should we call you?"></div>
@@ -1687,7 +1728,7 @@ async function onAuthSubmit(e) {
       if (!val("liEmail") || !val("liPass")) return say("Enter your email and password.");
       const { error } = await sb.auth.signInWithPassword({ email: val("liEmail").trim(), password: val("liPass") });
       if (error) return say(friendlyError(error));
-      toast("Welcome back!"); location.hash = "my-team";
+      toast("Welcome back!"); navigate("my-team");
     } else if (f.id === "signupForm") {
       if (!/^\S+@\S+\.\S+$/.test(val("suEmail").trim())) return say("Enter a valid email address.");
       if (val("suPass").length < 8) return say("Use a password of at least 8 characters.");
@@ -1696,7 +1737,7 @@ async function onAuthSubmit(e) {
         options: { data: { display_name: val("suName").trim() || undefined }, emailRedirectTo: SB_CFG.site || location.href.split("#")[0] },
       });
       if (error) return say(friendlyError(error));
-      if (data.session) { toast("Account created. You're logged in!"); location.hash = "my-team"; }
+      if (data.session) { toast("Account created. You're logged in!"); navigate("my-team"); }
       else if (data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) say("There's already an account with that email. Log in instead, or reset your password.");
       else say("Almost done: check your email and click the confirmation link, then log in.", true);
     } else if (f.id === "forgotForm") {
@@ -1708,14 +1749,14 @@ async function onAuthSubmit(e) {
       if (val("rsPass").length < 8) return say("Use a password of at least 8 characters.");
       const { error } = await sb.auth.updateUser({ password: val("rsPass") });
       if (error) return say(friendlyError(error));
-      account.recovery = false; toast("Password updated"); location.hash = "account";
+      account.recovery = false; toast("Password updated"); navigate("account");
     } else if (f.id === "deleteForm") {
       if (val("delConfirm").trim().toUpperCase() !== "DELETE") return say("Type DELETE to confirm.");
       const { error } = await sb.rpc("delete_my_account");
       if (error) return say(friendlyError(error));
       await sb.auth.signOut({ scope: "local" });
       store.set("tsm-roster", null);
-      toast("Your account was deleted."); location.hash = "home";
+      toast("Your account was deleted."); navigate("home");
     }
   } finally { btn.disabled = false; }
 }
@@ -1723,7 +1764,7 @@ async function onAuthSubmit(e) {
 // ---------------------------------------------------------------- account page
 function renderAccount() {
   if (!sb) { $("#page").innerHTML = noAuth(); return; }
-  if (!signedIn()) { location.hash = "login"; return; }
+  if (!signedIn()) { navigate("login"); return; }
   if (!account.loaded) { $("#page").innerHTML = `<p class="loading">Loading your account…</p>`; return; }
   const pr = account.profile, ls = leagueSettings();
   const teamRows = account.teams.map(t => `<div class="list-row">
@@ -1808,9 +1849,9 @@ function inlinePrompt(label, value, onSave) {
 }
 
 Object.assign(ACTIONS, {
-  logout: async () => { await sb.auth.signOut(); toast("Logged out"); location.hash = "home"; },
+  logout: async () => { await sb.auth.signOut(); toast("Logged out"); navigate("home"); },
   watch: el => toggleWatch(el.dataset.id),
-  teamNew: () => inlinePrompt("Name your new team", `Team ${account.teams.length + 1}`, async name => { await createTeam(name); location.hash = "my-team"; render(); }),
+  teamNew: () => inlinePrompt("Name your new team", `Team ${account.teams.length + 1}`, async name => { await createTeam(name); navigate("my-team"); render(); }),
   teamRename: () => { const t = activeTeam(); if (t) inlinePrompt("Rename team", t.name, name => { t.name = name; saveTeamSoon(t); render(); }); },
   teamDelete: async el => {
     const t = account.teams.find(x => x.id === el.dataset.id); if (!t) return;
@@ -1821,9 +1862,9 @@ Object.assign(ACTIONS, {
     if (account.activeTeamId === t.id) await setActiveTeam(account.teams[0] ? account.teams[0].id : null, true);
     toast(`Deleted “${t.name}”`); render();
   },
-  acctOpenTeam: async el => { await setActiveTeam(el.dataset.id, true); location.hash = "my-team"; },
+  acctOpenTeam: async el => { await setActiveTeam(el.dataset.id, true); navigate("my-team"); },
   tradeSave: () => {
-    if (!signedIn()) { toast("Log in to save trades"); location.hash = "login"; return; }
+    if (!signedIn()) { toast("Log in to save trades"); navigate("login"); return; }
     const t = tradeState(), nm = ids => ids.map(id => lastName((byId.get(id) || { name: "?" }).name)).join(" + ");
     inlinePrompt("Name this trade", `${nm(t.give)} for ${nm(t.get)}`.slice(0, 60), async name => {
       const { data, error } = await sb.from("saved_trades").insert({ name, give: t.give, get: t.get }).select().single();
@@ -1831,7 +1872,7 @@ Object.assign(ACTIONS, {
       account.trades.unshift(data); toast("Trade saved"); render();
     });
   },
-  tradeLoad: el => { const t = account.trades.find(x => x.id === el.dataset.id); if (!t) return; store.set("tsm-trade", { give: t.give, get: t.get }); location.hash = "trade"; render(); },
+  tradeLoad: el => { const t = account.trades.find(x => x.id === el.dataset.id); if (!t) return; store.set("tsm-trade", { give: t.give, get: t.get }); navigate("trade"); render(); },
   tradeDelete: async el => {
     const { error } = await sb.from("saved_trades").delete().eq("id", el.dataset.id);
     if (error) return toast(friendlyError(error), "bad");

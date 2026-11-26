@@ -1,29 +1,36 @@
-<title>The Sports Mattress · Fantasy Football Matchups, Start/Sit and Trade Analyzer</title>
+<title>__TITLE__</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="description" content="Free weekly fantasy football tools: color-coded matchup charts, start/sit calls, a trade analyzer, snap and target share, strength of schedule and kickoff weather. Updated every morning.">
+<meta name="description" content="__DESC__">
+<!--__ROBOTS__-->
 <meta name="theme-color" content="#111a2a">
-<link rel="canonical" href="__SITE_URL__">
+<link rel="canonical" href="__CANONICAL__">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="The Sports Mattress">
-<meta property="og:title" content="The Sports Mattress · Fantasy football matchups you can sleep on">
-<meta property="og:description" content="Weekly matchup charts, start/sit calls, a trade analyzer, usage stats and strength of schedule. Free, updated every morning.">
-<meta property="og:url" content="__SITE_URL__">
+<meta property="og:title" content="__TITLE__">
+<meta property="og:description" content="__DESC__">
+<meta property="og:url" content="__CANONICAL__">
 <meta property="og:image" content="__SITE_URL__assets/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="The Sports Mattress · Fantasy football matchups you can sleep on">
-<meta name="twitter:description" content="Weekly matchup charts, start/sit calls, a trade analyzer, usage stats and strength of schedule.">
+<meta name="twitter:title" content="__TITLE__">
+<meta name="twitter:description" content="__DESC__">
 <meta name="twitter:image" content="__SITE_URL__assets/og.png">
-<link rel="icon" type="image/svg+xml" href="assets/mark.svg">
-<link rel="icon" type="image/png" sizes="32x32" href="assets/icon-32.png">
-<link rel="apple-touch-icon" href="assets/icon-180.png">
+<link rel="icon" href="__BASE__favicon.ico" sizes="32x32">
+<link rel="icon" type="image/svg+xml" href="__BASE__assets/mark.svg">
+<link rel="apple-touch-icon" href="__BASE__assets/icon-180.png">
+<link rel="manifest" href="__BASE__site.webmanifest">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Figtree:wght@400;500;600;700;800&display=swap">
-<link rel="stylesheet" href="assets/app.css?v=__BUILD__">
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Figtree:wght@400;500;600;700;800&display=swap">
+<link id="gfonts" rel="stylesheet" media="print" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Figtree:wght@400;500;600;700;800&display=swap">
+<script>(function () { var l = document.getElementById("gfonts"); function on() { l.media = "all"; } if (l.sheet) on(); else l.addEventListener("load", on); })();</script>
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Figtree:wght@400;500;600;700;800&display=swap"></noscript>
+<link rel="preload" as="fetch" href="__BASE__data.json?v=__BUILD__" crossorigin="anonymous">
+<link rel="stylesheet" href="__BASE__assets/app.css?v=__BUILD__">
+<!--__HEAD_EXTRA__-->
 
 <a class="skip" href="#page" data-skip>Skip to content</a>
 
@@ -65,7 +72,7 @@
 </header>
 
 <main class="wrap" id="page" tabindex="-1">
-  <p class="loading">Loading this week's matchups…</p>
+<!--__FALLBACK__-->
 </main>
 
 <footer class="site-foot">
@@ -113,6 +120,6 @@
   <div class="drawer-body" id="pdBody"></div>
 </dialog>
 
-<script>window.TSM_DOWNLOADS = /*__DOWNLOADS__*/true; window.TSM_BUILD = "__BUILD__"; window.TSM_SB = /*__SUPABASE__*/null;</script>
-<script src="assets/vendor/supabase-2.119.0.js"></script>
-<script src="assets/app.js?v=__BUILD__"></script>
+<script>window.TSM_DOWNLOADS = /*__DOWNLOADS__*/true; window.TSM_BUILD = "__BUILD__"; window.TSM_SB = /*__SUPABASE__*/null; window.TSM_CLEAN = /*__CLEAN__*/false; window.TSM_TITLES = /*__TITLES__*/null; window.TSM_BASE = "__BASE__";</script>
+<script defer src="__BASE__assets/vendor/supabase-2.119.0.js"></script>
+<script defer src="__BASE__assets/app.js?v=__BUILD__"></script>
