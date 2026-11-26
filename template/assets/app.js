@@ -1662,6 +1662,13 @@ function renderTerms() {
 // Sign-up, login and saved data. The anon key is public by design; row level security in the
 // database limits every user to their own rows.
 const SB_CFG = window.TSM_SB || {};
+// Email links (confirm sign-up, password reset) land here with details in the #hash. Read them before the
+// Supabase client consumes and clears them, so we can say what happened.
+const AUTH_LANDING = (() => {
+  const h = new URLSearchParams((location.hash || "").replace(/^#/, ""));
+  if (h.get("error_description")) return { error: h.get("error_description").replace(/\+/g, " ") };
+  return h.get("type") ? { type: h.get("type") } : null;
+})();
 const sb = window.supabase && SB_CFG.url ? window.supabase.createClient(SB_CFG.url, SB_CFG.key, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storageKey: "tsm-auth" },
 }) : null;
@@ -1714,6 +1721,11 @@ async function loadCloud() {
 function initAuth() {
   renderAcct();
   if (!sb) return;
+  if (AUTH_LANDING && AUTH_LANDING.error) {
+    toast(/expired|invalid/i.test(AUTH_LANDING.error) ? "That email link has expired. Log in, or request a new link." : AUTH_LANDING.error, "bad");
+  } else if (AUTH_LANDING && AUTH_LANDING.type === "signup") {
+    setTimeout(() => { toast("Email confirmed. Welcome to The Sports Mattress!"); if (state.page === "home") navigate("my-team"); }, 600);
+  }
   sb.auth.onAuthStateChange((event, session) => {
     const was = account.user && account.user.id;
     account.user = session ? session.user : null;
