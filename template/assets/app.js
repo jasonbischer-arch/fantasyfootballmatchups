@@ -393,7 +393,10 @@ function renderHome() {
   const tgtUp = shareRisers("tgtShare", ["RB", "WR", "TE"], 0.04).map(x => playerRow(x.p,
     `<span class="up">${pct(x.s)} → ${pct(x.r)}</span><small>target share, last 3 · ${f1(x.p.l3use.tgt ?? x.p.use.tgt)} tgt/g</small>`));
   // Injury report (fantasy starters, chosen by PPR average so the list is the same in every format).
-  const inj = D.players.filter(p => p.inj && p.ppg.ppr >= 9).sort((a, b) => b.ppg.ppr - a.ppg.ppr).slice(0, 8)
+  // This week's Out / Doubtful / Questionable only (no IR); when there are more than fit, the
+  // most important (highest-scoring) players win the spots.
+  const inj = D.players.filter(p => p.inj && /^(out|doubtful|questionable)/i.test(p.inj.status) && p.ppg.ppr >= 6)
+    .sort((a, b) => b.ppg.ppr - a.ppg.ppr).slice(0, 10)
     .map(p => `<div class="list-row">
       <div class="pcell">${avatar(p)}<span class="meta">${plink(p)}<small>${p.pos} · ${esc(p.team)} · ${f1(pts(p.ppg, f))} pts/g</small></span></div>
       <div class="right">${injBadge(p)}<small>${esc(p.inj.injury || "")}</small></div></div>`);
@@ -481,7 +484,7 @@ function renderHome() {
       <div class="section"><div class="section-head"><h2>Usage risers</h2><span class="muted" style="font-size:13px">Snap share, last 3 vs season</span></div>
         ${listPanel(snapUp, "No big snap-share jumps this week.")}</div>
       <div class="section"><div class="section-head"><h2>Injury report</h2><span class="muted" style="font-size:13px">Week ${D.week}, fantasy starters</span></div>
-        <div class="panel list inj-panel">${injNote}${inj.length ? inj.join("") : `<p class="empty">No fantasy starters on the injury report yet.</p>`}</div></div>
+        <div class="panel list inj-panel">${injNote}${inj.length ? inj.join("") : `<p class="empty">No fantasy-relevant players are listed out or questionable yet.</p>`}</div></div>
     </section>
 
     <section class="grid-3" style="align-items:start">
