@@ -30,7 +30,7 @@ usage and team tendencies).
 ## How it updates
 
 `.github/workflows/update.yml` rebuilds and publishes the site to GitHub Pages every
-**Wednesday at 10am** and **Sunday at 5am** (US Eastern), and on every push to `main`.
+**every day at 5am** (US Eastern), and on every push to `main`.
 To rebuild by hand: **Actions → Update matchup charts → Run workflow** (you can force a week).
 
 ## Run it locally

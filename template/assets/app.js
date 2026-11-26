@@ -242,7 +242,7 @@ function setMenu(open) {
   const b = $("#menuBtn");
   b.setAttribute("aria-expanded", open); b.setAttribute("aria-label", open ? "Close menu" : "Open menu");
 }
-// Status bar: when the data was built and when the next scheduled rebuild runs (Wed 10am, Sun 5am ET).
+// Status bar: when the data was built and when the next scheduled rebuild runs (daily, 5am ET).
 function etParts(d) {
   const o = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short", hour: "numeric", hourCycle: "h23" })
     .formatToParts(d).map(x => [x.type, x.value]));
@@ -253,7 +253,7 @@ function nextUpdate(now = new Date()) {
   for (let i = 1; i <= 24 * 8; i++) {
     d.setTime(d.getTime() + 3600e3);
     const { wd, h } = etParts(d);
-    if ((wd === "Wed" && h === 10) || (wd === "Sun" && h === 5)) return d;
+    if (h === 5) return d;
   }
   return null;
 }
@@ -392,23 +392,13 @@ function renderHome() {
   // Target share risers.
   const tgtUp = shareRisers("tgtShare", ["RB", "WR", "TE"], 0.04).map(x => playerRow(x.p,
     `<span class="up">${pct(x.s)} → ${pct(x.r)}</span><small>target share, last 3 · ${f1(x.p.l3use.tgt ?? x.p.use.tgt)} tgt/g</small>`));
-  // Injury report: this week's statuses, players who sat out last week, and IR.
-  const relevant = p => p.ppg.ppr >= 7;
-  const byPpg = (a, b) => b.ppg.ppr - a.ppg.ppr;
-  const injRow = (p, right) => `<div class="list-row">
-      <div class="pcell">${avatar(p)}<span class="meta">${plink(p)}<small class="pline">${p.pos} · ${teamLogo(p.team, "sm")}${esc(p.team)} · ${f1(pts(p.ppg, f))} pts/g</small></span></div>
-      <div class="right">${right}</div></div>`;
-  const current = D.players.filter(p => p.inj && p.inj.status !== "IR" && relevant(p)).sort(byPpg).slice(0, 8)
-    .map(p => injRow(p, `${injBadge(p)}<small>${esc(p.inj.injury || "")}</small>`));
-  const sat = D.players.filter(p => !p.inj && p.missed >= 1 && !inactive(p) && relevant(p)).sort(byPpg).slice(0, 6)
-    .map(p => injRow(p, `<span class="badge q">Missed last game</span><small>${p.injPrev ? `Wk ${p.injPrev.week}: ${esc(p.injPrev.status)}${p.injPrev.injury ? ` · ${esc(p.injPrev.injury)}` : ""}` : "No reason listed"}</small>`));
-  const ir = D.players.filter(p => (p.inj && p.inj.status === "IR") || inactive(p)).filter(p => p.ppg.ppr >= 9).sort(byPpg);
+  // Injury report (fantasy starters, chosen by PPR average so the list is the same in every format).
+  const inj = D.players.filter(p => p.inj && p.ppg.ppr >= 9).sort((a, b) => b.ppg.ppr - a.ppg.ppr).slice(0, 8)
+    .map(p => `<div class="list-row">
+      <div class="pcell">${avatar(p)}<span class="meta">${plink(p)}<small>${p.pos} · ${esc(p.team)} · ${f1(pts(p.ppg, f))} pts/g</small></span></div>
+      <div class="right">${injBadge(p)}<small>${esc(p.inj.injury || "")}</small></div></div>`);
   const filed = (D.injuryTeams || []).length;
-  const injGroup = (title, rows, empty) => `<div class="inj-group"><h3>${title}</h3>${rows.length ? rows.join("") : `<p class="inj-empty">${empty}</p>`}</div>`;
-  const injHtml = `${filed < 32 ? `<p class="inj-note">Week ${D.week} reports are in for <b>${filed} of 32</b> teams. The rest post by Friday, and the site picks them up Sunday at 5am ET.</p>` : ""}
-    ${injGroup(`Week ${D.week} report`, current, filed ? "No fantasy starters listed yet." : "No team has filed yet.")}
-    ${injGroup("Missed last game", sat, "Every fantasy starter played last week.")}
-    ${ir.length ? `<div class="inj-group"><h3>On injured reserve</h3><p class="inj-ir">${ir.map(p => `${plink(p)} <small>${p.pos} · ${esc(p.team)}</small>`).join(", ")}</p></div>` : ""}`;
+  const injNote = filed < 32 ? `<p class="inj-note">Week ${D.week} reports are in for <b>${filed} of 32</b> teams. The rest post later in the week; the site updates every morning at 5am ET.</p>` : "";
 
   // Hot and cold: last 3 games vs season average.
   const form = D.players.filter(p => p.g >= 5 && !p.bye && playedRecently(p)).map(p => {
@@ -491,7 +481,7 @@ function renderHome() {
       <div class="section"><div class="section-head"><h2>Usage risers</h2><span class="muted" style="font-size:13px">Snap share, last 3 vs season</span></div>
         ${listPanel(snapUp, "No big snap-share jumps this week.")}</div>
       <div class="section"><div class="section-head"><h2>Injury report</h2><span class="muted" style="font-size:13px">Week ${D.week}, fantasy starters</span></div>
-        <div class="panel list inj-panel">${injHtml}</div></div>
+        <div class="panel list inj-panel">${injNote}${inj.length ? inj.join("") : `<p class="empty">No fantasy starters on the injury report yet.</p>`}</div></div>
     </section>
 
     <section class="grid-3" style="align-items:start">
@@ -1398,7 +1388,7 @@ function renderAbout() {
     "The Sports Mattress started as a set of hand-made weekly matchup spreadsheets. Now the charts build themselves, with a few more tools around them.", [
     ["What it is", `<p>Free fantasy football research, built around one idea: who a player faces matters. Every week we rank all 32 defenses by what they give up to quarterbacks, running backs, receivers and tight ends, color them from tough to great, and put them next to the players who face them.</p>
       <p>Around the charts are the tools fantasy managers use most: <a href="#start-sit">Start / Sit</a> comparisons, a <a href="#my-team">lineup builder</a>, a <a href="#trade">Trade Analyzer</a>, <a href="#players">player usage</a> (snap share, target share, red-zone chances), <a href="#schedule">strength of schedule</a> and <a href="#teams">team tendencies</a>.</p>`],
-    ["When it updates", `<p>Everything rebuilds automatically every <strong>Wednesday at 10am</strong> and <strong>Sunday at 5am</strong> Eastern. Wednesday brings the new week's matchups with every game from the week before; Sunday morning picks up the final injury reports, depth chart changes and the latest kickoff forecast.</p>`],
+    ["When it updates", `<p>Everything rebuilds automatically <strong>every morning at 5am</strong> Eastern: new matchups once the week's games are final, plus the latest injury reports, depth charts, betting lines and kickoff forecasts.</p>`],
     ["Where the numbers come from", `<p>Stats, schedules, betting lines, depth charts, injury reports, snap counts and play-by-play come from <a href="https://github.com/nflverse/nflverse-data" target="_blank" rel="noopener">nflverse</a>, an open-source NFL data project. Kickoff weather comes from <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a>. See <a href="#how-it-works">How It Works</a> for how each number is calculated.</p>`],
     ["Not affiliated", `<p>The Sports Mattress is an independent fan project. It isn't affiliated with or endorsed by the NFL, its teams or any fantasy platform.</p>`],
   ]);
@@ -1432,7 +1422,7 @@ function renderHow() {
     ["Team tendencies", `<ul>
       <li><strong>Pass rate</strong>: share of plays that are dropbacks. <strong>Neutral pass rate</strong>: the same on 1st and 2nd down while the game is close (win probability 20–80%, first three quarters).</li>
       <li><strong>PROE</strong>: pass rate over expected for the situation. <strong>RZ plays</strong>: snaps inside the opponent's 20 per game.</li></ul>`],
-    ["Data and updates", `<p>Data from <a href="https://github.com/nflverse/nflverse-data" target="_blank" rel="noopener">nflverse</a> and <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a>, rebuilt every Wednesday at 10am and Sunday at 5am Eastern. Current data: ${D.season} season, stats through Week ${D.statsThrough}.</p>`],
+    ["Data and updates", `<p>Data from <a href="https://github.com/nflverse/nflverse-data" target="_blank" rel="noopener">nflverse</a> and <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a>, rebuilt every morning at 5am Eastern. Current data: ${D.season} season, stats through Week ${D.statsThrough}.</p>`],
   ], true);
 }
 
