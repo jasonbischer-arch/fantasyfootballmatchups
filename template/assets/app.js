@@ -115,7 +115,14 @@ function wxCell(w) {
 // ------------------------------------------------------------------ player model
 function playerLabel(p) { return `${p.name} (${p.pos}, ${p.team})`; }
 function injOut(p) { return p.inj && /^(out|ir|pup)/i.test(p.inj.status); }
-function unavailable(p) { return p.bye ? "on bye" : injOut(p) ? "ruled out" : null; }
+// Players on IR drop off the weekly injury report, so also go by games actually played:
+// 2+ straight team games missed with no injury designation almost always means IR or similar.
+function inactive(p) { return !p.inj && (p.missed || 0) >= 2; }
+// For hot/cold, risers and suggestions: he played in his team's last game and isn't out or doubtful.
+function playedRecently(p) { return !(p.missed >= 1) && !injOut(p) && !(p.inj && /doubtful/i.test(p.inj.status)); }
+function unavailable(p) {
+  return p.bye ? "on bye" : injOut(p) ? "ruled out" : inactive(p) ? `inactive (hasn't played in his team's last ${p.missed} games)` : null;
+}
 function defFor(p) { return p.bye ? null : D.defenses[p.pos][p.opp]; }
 function teamOf(p) { return D.teams[p.team] || {}; }
 // Projection: own scoring (60% season, 40% last 3) scaled by how much the opponent allows to the
@@ -127,12 +134,13 @@ function project(p, f = state.fmt) {
   const d = defFor(p), avg = D.leagueAvg[p.pos][f];
   const raw = avg ? d.fppg[f] / avg : 1;
   const factor = Math.min(1.25, Math.max(0.75, 1 + 0.5 * (raw - 1)));
-  const out = injOut(p) ? 0 : base * factor;
+  const out = injOut(p) || inactive(p) ? 0 : base * factor;
   return { base, factor, proj: out, def: d };
 }
 function injBadge(p) {
+  if (inactive(p)) return `<span class="badge out" title="Hasn't played in his team's last ${p.missed} games">Inactive</span>`;
   if (p.bye) return `<span class="badge out">Bye</span>`;
-  if (!p.inj) return "";
+  if (!p.inj) return p.missed >= 1 ? `<span class="badge q" title="Didn't play in his team's last game">Missed last game</span>` : "";
   return `<span class="badge ${injOut(p) ? "out" : "q"}" title="${esc(p.inj.injury || "")}">${esc(p.inj.status)}</span>`;
 }
 function oppText(p) { return p.bye ? "BYE" : `${p.away ? "@" : "vs "}${p.opp}`; }
@@ -174,7 +182,7 @@ function boot() {
   const saved = store.get("tsm-ss", null);
   if (saved) { ss.a = byId.get(saved.a) || null; ss.b = byId.get(saved.b) || null; }
   if (!ss.a && !ss.b) {
-    const rbs = D.players.filter(p => p.pos === "RB" && !unavailable(p) && p.g >= 4);
+    const rbs = D.players.filter(p => p.pos === "RB" && !unavailable(p) && playedRecently(p) && p.g >= 4);
     if (rbs.length > 12) { ss.a = rbs[10]; ss.b = rbs[11]; ss.example = true; }
   }
 
@@ -355,7 +363,7 @@ function playerRow(p, right) {
 }
 function listPanel(items, empty) { return `<div class="panel list">${items.length ? items.join("") : `<p class="empty">${empty}</p>`}</div>`; }
 function shareRisers(key, positions, minJump) {
-  return D.players.filter(p => positions.includes(p.pos) && p.g >= 4 && !unavailable(p)).map(p => {
+  return D.players.filter(p => positions.includes(p.pos) && p.g >= 4 && !unavailable(p) && playedRecently(p)).map(p => {
     const s = p.season[key], r = p.recent[key];
     return { p, s, r, d: s != null && r != null ? r - s : -1 };
   }).filter(x => x.d >= minJump).sort((a, b) => b.d - a.d).slice(0, 8);
@@ -367,7 +375,7 @@ function renderHome() {
   const byes = Object.entries(D.teams).filter(([, t]) => !t.opp).map(([k]) => k);
   // Hero tiles: this week's headline spots.
   const shootout = playing.filter(([, t]) => t.total != null && !t.away).sort((a, b) => b[1].total - a[1].total)[0];
-  const starters = D.players.filter(p => !unavailable(p) && p.g >= 3);
+  const starters = D.players.filter(p => !unavailable(p) && playedRecently(p) && p.g >= 3);
   const smash = starters.filter(p => p.ppg.ppr >= 10)
     .sort((a, b) => defFor(b).rank[f] - defFor(a).rank[f] || project(b).proj - project(a).proj)[0];
   // Fade: a mid-range starter (8–12 PPR pts/g, so the pick stays the same in every format) with the toughest matchup.
@@ -391,7 +399,7 @@ function renderHome() {
       <div class="pcell">${avatar(p)}<span class="meta">${plink(p)}<small>${p.pos} · ${esc(p.team)} · ${f1(pts(p.ppg, f))} pts/g</small></span></div>
       <div class="right">${injBadge(p)}<small>${esc(p.inj.injury || "")}</small></div></div>`);
   // Hot and cold: last 3 games vs season average.
-  const form = D.players.filter(p => p.g >= 5 && !p.bye).map(p => {
+  const form = D.players.filter(p => p.g >= 5 && !p.bye && playedRecently(p)).map(p => {
     const s = pts(p.ppg, f), r = pts(p.l3, f);
     return { p, s, r, d: r - s };
   });
@@ -726,7 +734,7 @@ const SLOT_SETS = {
 const ELIGIBLE = { QB: ["QB"], RB: ["RB"], WR: ["WR"], TE: ["TE"], FLEX: ["RB", "WR", "TE"], SFLEX: ["QB", "RB", "WR", "TE"] };
 
 function exampleRoster() {
-  const pick = (pos, idxs) => { const l = D.players.filter(p => p.pos === pos && p.g >= 4 && !unavailable(p)); return idxs.map(i => l[i]).filter(Boolean); };
+  const pick = (pos, idxs) => { const l = D.players.filter(p => p.pos === pos && p.g >= 4 && !unavailable(p) && playedRecently(p)); return idxs.map(i => l[i]).filter(Boolean); };
   return [...pick("QB", [6]), ...pick("RB", [4, 13, 24]), ...pick("WR", [5, 14, 26]), ...pick("TE", [5]), ...pick("WR", [38]), ...pick("RB", [33])];
 }
 function roster() {
@@ -1108,7 +1116,7 @@ function rosValue(p, f = state.fmt) {
   // games (often a longer injury) loses another week.
   let avail = games.map(() => 1);
   if (games[0] && games[0].w === D.week) {
-    if (injOut(p)) avail[0] = 0;
+    if (injOut(p) || inactive(p)) avail[0] = 0;
     else if (p.inj && /doubtful/i.test(p.inj.status)) avail[0] = 0.5;
   }
   if ((p.missed || 0) >= 2) { const i = avail.findIndex(v => v > 0); if (i >= 0) avail[i] = 0; }
@@ -1166,7 +1174,7 @@ function tradeState() {
   if (saved) return { give: clean(saved.give), get: clean(saved.get), example: false };
   // Example: a hot pass catcher for a cold running back of similar value.
   const m = playerModel();
-  const pool = m.rows.filter(r => r.p.g >= 5 && !unavailable(r.p) && r.season >= 11 && r.season <= 19);
+  const pool = m.rows.filter(r => r.p.g >= 5 && !unavailable(r.p) && playedRecently(r.p) && r.season >= 11 && r.season <= 19);
   const hots = pool.filter(r => r.p.pos !== "QB" && formOf(r).k === "hot");
   const colds = pool.filter(r => r.p.pos !== "QB" && formOf(r).k === "cold");
   let best = null;
@@ -1251,7 +1259,7 @@ function renderTrade() {
       const n = (shortSide === "get" ? get : give).length;
       const w = DEPTH_WEIGHTS[n] ?? 0.3, need = Math.abs(diff) / w;
       const inTrade = new Set([...t.give, ...t.get]);
-      const cands = D.players.filter(p => !inTrade.has(p.id) && !unavailable(p) && p.g >= 3)
+      const cands = D.players.filter(p => !inTrade.has(p.id) && !unavailable(p) && playedRecently(p) && p.g >= 3)
         .map(p => ({ p, v: rosValue(p, f).trade })).filter(x => x.v >= need * 0.7 && x.v <= need * 1.3)
         .sort((a, b) => Math.abs(a.v - need) - Math.abs(b.v - need)).slice(0, 5);
       if (cands.length) balance = `<div class="balance"><span class="muted">${shortSide === "get" ? "To even it out, ask them to add one of:" : "To make it fair for them, you could add one of:"}</span>

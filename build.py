@@ -40,6 +40,7 @@ URL_SCHEDULE = NFLVERSE + "/schedules/games.csv"
 URL_DEPTH = NFLVERSE + "/depth_charts/depth_charts_{season}.csv"
 URL_INJURIES = NFLVERSE + "/injuries/injuries_{season}.csv"
 URL_SNAPS = NFLVERSE + "/snap_counts/snap_counts_{season}.csv"
+URL_ROSTER = NFLVERSE + "/rosters/roster_{season}.csv"
 URL_PLAYERS = NFLVERSE + "/players/players.csv"
 URL_PBP = NFLVERSE + "/pbp/play_by_play_{season}.csv.gz"
 
@@ -186,6 +187,25 @@ def load_depth(season: int) -> dict[str, dict[str, list[dict]]]:
         for lst in team.values():
             lst.sort(key=lambda r: int(num(r["pos_rank"])))
     return depth
+
+
+def load_roster_status(season: int) -> dict[str, str]:
+    """Official roster status per gsis_id (ACT, RES = injured reserve/PUP, CUT, RET, DEV...). Empty if unavailable.
+
+    The weekly injury report leaves out players on IR, so this is how IR players are caught.
+    """
+    try:
+        path = fetch(URL_ROSTER.format(season=season), f"roster_{season}.csv")
+    except Exception as e:
+        print(f"  roster status unavailable: {e}", file=sys.stderr)
+        return {}
+    latest: dict[str, tuple[int, str]] = {}
+    with open(path, newline="") as f:
+        for r in csv.DictReader(f):
+            wk = int(num(r.get("week")))
+            if r["gsis_id"] and wk >= latest.get(r["gsis_id"], (-1, ""))[0]:
+                latest[r["gsis_id"]] = (wk, r["status"])
+    return {k: v[1] for k, v in latest.items()}
 
 
 def load_snaps(season: int) -> dict[tuple[str, int], tuple[float, int]]:
@@ -359,6 +379,7 @@ def build(season: int, week: int | None) -> dict:
     stats = load_stats(season)
     depth = load_depth(season)
     injuries = load_injuries(season, target)
+    roster_status = load_roster_status(season)
 
     completed = {g["game_id"]: g for g in schedule
                  if g["result"] not in ("", "NA") and int(g["week"]) < target}
@@ -465,7 +486,11 @@ def build(season: int, week: int | None) -> dict:
             opponent[g["away_team"]] = (g["home_team"], True, kick)
 
     def players_for(team: str, pos: str) -> list[dict]:
-        lst = depth.get(team, {}).get(pos, [])[: DEPTH_SHOWN[pos]]
+        # Skip anyone on injured reserve or no longer on the team, so the next healthy player moves up.
+        healthy = [p for p in depth.get(team, {}).get(pos, [])
+                   if roster_status.get(p["gsis_id"]) not in GONE_STATUSES | {"RES"}
+                   and (injuries.get(p["gsis_id"]) or {}).get("status", "") != "Out"]
+        lst = healthy[: DEPTH_SHOWN[pos]]
         if not lst:
             return []
         if pos == "QB":
@@ -507,7 +532,7 @@ def build(season: int, week: int | None) -> dict:
     for g in completed.values():
         team_weeks[g["home_team"]].add(int(g["week"]))
         team_weeks[g["away_team"]].add(int(g["week"]))
-    players_out = build_players(plog, depth, injuries, opponent, target, snaps, pbp_player, team_game, team_weeks)
+    players_out = build_players(plog, depth, injuries, opponent, target, snaps, pbp_player, team_game, team_weeks, roster_status)
     weather = load_weather([g for g in schedule if int(g["week"]) == target])
     teams_out = build_teams(schedule, completed, target, pbp_team, teams, weather)
     league_avg = {pos: {f: round(sum(defense_info[pos][d]["fppg"][f] for d in teams) / len(teams), 2)
@@ -601,7 +626,11 @@ def share(part: float, whole: float) -> float | None:
     return round(part / whole, 3) if whole else None
 
 
-def build_players(plog, depth, injuries, opponent, target, snaps, pbp_player, team_game, team_weeks) -> list[dict]:
+GONE_STATUSES = {"CUT", "RET", "RLS", "TRC", "EXE", "UFA", "UDF"}   # no longer on a team
+
+
+def build_players(plog, depth, injuries, opponent, target, snaps, pbp_player, team_game, team_weeks, roster_status=None) -> list[dict]:
+    roster_status = roster_status or {}
     """Per-player production, usage shares and game logs."""
     depth_team = {}
     for team, by_pos in depth.items():
@@ -678,8 +707,13 @@ def build_players(plog, depth, injuries, opponent, target, snaps, pbp_player, te
             row.update({"opp": opp, "away": away, "kick": kick})
         else:
             row["bye"] = True
+        status = roster_status.get(pid)
+        if status in GONE_STATUSES:
+            continue
         if pid in injuries:
             row["inj"] = injuries[pid]
+        if status == "RES":     # injured reserve, PUP or another reserve list: out
+            row["inj"] = {"status": "IR", "injury": (injuries.get(pid) or {}).get("injury", "")}
         out.append(row)
     out.sort(key=lambda p: -p["ppg"]["ppr"])
     return out
