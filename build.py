@@ -35,6 +35,9 @@ SITE_URL = "https://sportsmattress.io/"
 # database limits every signed-in user to their own rows.
 # Google Tag Manager container (manages Google Analytics). Empty string turns it off.
 GTM_ID = "GTM-WDFGCDGP"
+# Google Analytics 4 measurement ID, loaded directly with gtag.js. Don't also add a GA4 tag for this ID
+# inside Tag Manager, or every visit is counted twice.
+GA4_ID = "G-MNVN8N24ZZ"
 CONTACT_EMAIL = "thesportsmattress@gmail.com"
 # Where analytics needs opt-in consent before it runs (EEA, UK, Switzerland).
 CONSENT_REGIONS = ["AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR", "DE", "GR", "HU", "IS", "IE", "IT", "LV", "LI",
@@ -811,7 +814,9 @@ def gtm_head() -> str:
                "gtag('consent','default',{ad_storage:'denied',ad_user_data:'denied',ad_personalization:'denied',analytics_storage:'granted'});"
                "try{var c=JSON.parse(localStorage.getItem('tsm-consent'));if(c){gtag('consent','update',{analytics_storage:c.analytics?'granted':'denied'});}}catch(e){}"
                "</script>\n")
-    return (consent + "<!-- Google Tag Manager -->\n<script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':\n"
+    ga4 = (f'<!-- Google Analytics (GA4) -->\n<script async src="https://www.googletagmanager.com/gtag/js?id={GA4_ID}"></script>\n'
+           f"<script>gtag('js', new Date());gtag('config', '{GA4_ID}');</script>\n") if GA4_ID else ""
+    return (consent + ga4 + "<!-- Google Tag Manager -->\n<script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':\n"
             "new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],\n"
             "j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=\n"
             "'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);\n"
