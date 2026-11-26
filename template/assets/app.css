@@ -520,6 +520,22 @@ table.h2h tbody th { font: 600 13px/1.2 var(--body); color: var(--muted); backgr
   .team-saved { margin-left: 0; }
 }
 
+
+/* ------------------------------------------------------------------ cookie banner */
+.cookie { position: fixed; left: 0; right: 0; bottom: 0; z-index: 55; background: var(--hdr); color: var(--hdr-ink); box-shadow: 0 -6px 24px rgb(0 0 0 / .25);
+  padding: 14px max(16px, env(safe-area-inset-right, 0px)) calc(14px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); }
+.cookie::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 3px; background: linear-gradient(90deg, var(--s-red), var(--s-orange) 35%, var(--s-yellow) 60%, var(--s-green)); }
+.cookie-inner { max-width: 1200px; margin: 0 auto; display: flex; gap: 12px 20px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.cookie p { margin: 0; font-size: 14px; color: var(--hdr-muted); max-width: 75ch; }
+.cookie p strong { color: var(--hdr-ink); }
+.cookie a { color: var(--s-yellow); }
+.cookie-actions { display: flex; gap: 8px; }
+.cookie .btn { background: transparent; color: var(--hdr-ink); border-color: rgb(255 255 255 / .3); }
+.cookie .btn.primary { background: var(--hdr-ink); color: var(--hdr); border-color: var(--hdr-ink); }
+.link-btn { all: unset; cursor: pointer; text-decoration: underline; color: inherit; }
+.link-btn:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+@media (max-width: 560px) { .cookie-actions { width: 100%; } .cookie-actions .btn { flex: 1; justify-content: center; } }
+
 /* ------------------------------------------------------------------ footer */
 .site-foot { background: var(--hdr); color: var(--hdr-muted); margin-top: 24px; position: relative; }
 .site-foot::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 4px; background: linear-gradient(90deg, var(--s-red), var(--s-orange) 35%, var(--s-yellow) 60%, var(--s-green)); }

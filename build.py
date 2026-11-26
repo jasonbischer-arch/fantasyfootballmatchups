@@ -35,6 +35,10 @@ SITE_URL = "https://sportsmattress.io/"
 # database limits every signed-in user to their own rows.
 # Google Tag Manager container (manages Google Analytics). Empty string turns it off.
 GTM_ID = "GTM-WDFGCDGP"
+CONTACT_EMAIL = "thesportsmattress@gmail.com"
+# Where analytics needs opt-in consent before it runs (EEA, UK, Switzerland).
+CONSENT_REGIONS = ["AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR", "DE", "GR", "HU", "IS", "IE", "IT", "LV", "LI",
+                   "LT", "LU", "MT", "NL", "NO", "PL", "PT", "RO", "SK", "SI", "ES", "SE", "GB", "CH"]
 SUPABASE_URL = "https://wwqyqvkuaxchfcunajwt.supabase.co"
 SUPABASE_ANON_KEY = ("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind3cXlxdmt1YXhjaGZjdW5hand0"
                      "Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTU2NTIxMzYsImV4cCI6MjExMTIyODEzNn0.swTtGyHesNC1_35A2XeZWsmSXUHfhpmgeJMb7V1HvN0")
@@ -800,7 +804,14 @@ def site_routes(data: dict) -> list[tuple]:
 def gtm_head() -> str:
     if not GTM_ID:
         return ""
-    return ("<!-- Google Tag Manager -->\n<script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':\n"
+    consent = ("<!-- Google Consent Mode: analytics only with consent where the law requires it; never ad storage -->\n<script>"
+               "window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}"
+               "gtag('consent','default',{ad_storage:'denied',ad_user_data:'denied',ad_personalization:'denied',"
+               "analytics_storage:'denied',wait_for_update:500,region:" + json.dumps(CONSENT_REGIONS) + "});"
+               "gtag('consent','default',{ad_storage:'denied',ad_user_data:'denied',ad_personalization:'denied',analytics_storage:'granted'});"
+               "try{var c=JSON.parse(localStorage.getItem('tsm-consent'));if(c){gtag('consent','update',{analytics_storage:c.analytics?'granted':'denied'});}}catch(e){}"
+               "</script>\n")
+    return (consent + "<!-- Google Tag Manager -->\n<script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':\n"
             "new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],\n"
             "j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=\n"
             "'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);\n"

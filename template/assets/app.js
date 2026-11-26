@@ -205,6 +205,7 @@ function boot() {
   $("#year").textContent = new Date().getFullYear();
   renderStatus();
   initAuth();
+  initConsent();
 
   const saved = store.get("tsm-ss", null);
   if (saved) { ss.a = byId.get(saved.a) || null; ss.b = byId.get(saved.b) || null; }
@@ -257,6 +258,32 @@ function route(scroll) {
   setMenu(false);
   if (scroll) { window.scrollTo(0, 0); $("#page").focus({ preventScroll: true }); }
   trackPageView(scroll);
+}
+
+// Cookie consent (Google Consent Mode). The page head sets the defaults; this records the visitor's choice.
+const CONTACT = "thesportsmattress@gmail.com";
+function setConsent(analytics) {
+  store.set("tsm-consent", { analytics, at: new Date().toISOString() });
+  window.dataLayer = window.dataLayer || [];
+  if (typeof window.gtag === "function") window.gtag("consent", "update", { analytics_storage: analytics ? "granted" : "denied" });
+  window.dataLayer.push({ event: "consent_update", analytics_consent: analytics ? "granted" : "denied" });
+  hideCookieBanner();
+}
+function showCookieBanner() {
+  if ($("#cookieBanner")) return;
+  const el = document.createElement("section");
+  el.id = "cookieBanner"; el.className = "cookie"; el.setAttribute("role", "region"); el.setAttribute("aria-label", "Cookie choices");
+  el.innerHTML = `<div class="cookie-inner">
+      <p><strong>Cookies.</strong> We use analytics cookies to count visits and see which tools people use. No ads, and we never see what you type. <a href="${CLEAN ? "/privacy/" : "#privacy"}">Privacy</a></p>
+      <div class="cookie-actions"><button type="button" class="btn" data-consent="0">Reject</button><button type="button" class="btn primary" data-consent="1">Accept</button></div>
+    </div>`;
+  document.body.appendChild(el);
+  el.addEventListener("click", e => { const b = e.target.closest("[data-consent]"); if (b) setConsent(b.dataset.consent === "1"); });
+}
+function hideCookieBanner() { const el = $("#cookieBanner"); if (el) el.remove(); }
+function initConsent() {
+  if (!store.get("tsm-consent", null)) showCookieBanner();
+  document.addEventListener("click", e => { if (e.target.closest("[data-cookie-settings]")) showCookieBanner(); });
 }
 
 // Analytics: tell Google Tag Manager about page changes made without a full reload.
@@ -1477,6 +1504,7 @@ function renderAbout() {
       <p>Around the charts are the tools fantasy managers use most: <a href="#start-sit">Start / Sit</a> comparisons, a <a href="#my-team">lineup builder</a>, a <a href="#trade">Trade Analyzer</a>, <a href="#players">player usage</a> (snap share, target share, red-zone chances), <a href="#schedule">strength of schedule</a> and <a href="#teams">team tendencies</a>.</p>`],
     ["When it updates", `<p>Everything rebuilds automatically <strong>every morning at 5am</strong> Eastern: new matchups once the week's games are final, plus the latest injury reports, depth charts, betting lines and kickoff forecasts.</p>`],
     ["Where the numbers come from", `<p>Stats, schedules, betting lines, depth charts, injury reports, snap counts and play-by-play come from <a href="https://github.com/nflverse/nflverse-data" target="_blank" rel="noopener">nflverse</a>, an open-source NFL data project. Kickoff weather comes from <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a>. See <a href="#how-it-works">How It Works</a> for how each number is calculated.</p>`],
+    ["Contact", `<p>Questions, ideas or something look off? Email <a href="mailto:${CONTACT}">${CONTACT}</a>.</p>`],
     ["Not affiliated", `<p>The Sports Mattress is an independent fan project. It isn't affiliated with or endorsed by the NFL, its teams or any fantasy platform.</p>`],
   ]);
 }
@@ -1520,9 +1548,10 @@ function renderPrivacy() {
       <p>Account data is stored with <a href="https://supabase.com/" target="_blank" rel="noopener">Supabase</a> in the United States. Each account can only read and change its own data. You stay logged in on a device until you log out.</p>`],
     ["Deleting your data", `<p>Delete your account any time from <a href="#account">Your Account</a>. That permanently removes your login and everything saved to it.</p>`],
     ["Emails", `<p>We only email you for account tasks you start, like confirming your address or resetting your password. No newsletters or marketing.</p>`],
-    ["Analytics", `<p>We use Google Analytics, through Google Tag Manager, to count visits and see which pages and tools people use. It uses cookies and collects standard information such as pages viewed, approximate location, device and browser. We don't send it your email, roster or anything you type. You can opt out with Google's <a href="https://tools.google.com/dlpage/gaoptout" target="_blank" rel="noopener">browser add-on</a> or by blocking cookies.</p>`],
+    ["Analytics", `<p>We use Google Analytics, through Google Tag Manager, to count visits and see which pages and tools people use. It uses cookies and collects standard information such as pages viewed, approximate location, device and browser. We don't send it your email, roster or anything you type. Analytics cookies are only used if you allow them: visitors in the EU, UK and Switzerland are asked first, and anyone can accept or reject them in <button type="button" class="link-btn" data-cookie-settings>cookie settings</button> (also linked at the bottom of every page). You can also use Google's <a href="https://tools.google.com/dlpage/gaoptout" target="_blank" rel="noopener">opt-out add-on</a>. We never use advertising cookies.</p>`],
     ["What we don't collect", `<p>No payment details and no advertising trackers. We don't sell your information.</p>`],
     ["Other services", `<p>To show the site, your browser loads fonts from Google Fonts, player photos from NFL.com and team logos from ESPN. Those services receive standard request information (like your IP address) under their own privacy policies. The site is hosted on GitHub Pages.</p>`],
+    ["Contact", `<p>Questions about your data, or want it removed? Email <a href="mailto:${CONTACT}">${CONTACT}</a>.</p>`],
     ["Changes", `<p>If this changes, this page will be updated first.</p>`],
   ]);
 }
