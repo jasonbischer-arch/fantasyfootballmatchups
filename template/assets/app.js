@@ -6,11 +6,12 @@ const POS = ["QB", "RB", "WR", "TE"];
 const POS_NAME = { QB: "quarterbacks", RB: "running backs", WR: "wide receivers", TE: "tight ends" };
 const RECENT = 3;
 const PLAYOFF_WEEKS = new Set([15, 16, 17]);
-const PAGES = ["home", "matchups", "start-sit", "my-team", "trade", "players", "schedule", "teams", "about", "how-it-works", "privacy", "terms"];
+const PAGES = ["home", "matchups", "start-sit", "my-team", "trade", "players", "schedule", "teams", "about", "how-it-works", "privacy", "terms", "login", "signup", "forgot", "reset", "account"];
 const PAGE_TITLES = {
   home: "Fantasy Football Matchups, Start/Sit and Trade Analyzer", "start-sit": "Start / Sit", "my-team": "My Team",
   trade: "Trade Analyzer", players: "Player Usage", schedule: "Strength of Schedule", teams: "Team Tendencies",
   about: "About", "how-it-works": "How It Works", privacy: "Privacy", terms: "Terms of Use",
+  login: "Log in", signup: "Create account", forgot: "Reset password", reset: "Set new password", account: "Your account",
 };
 
 let D = null;                         // data.json
@@ -166,7 +167,11 @@ function boot() {
   $("#navFmt").innerHTML = `<span>Scoring</span><div class="seg seg-sm" role="group" aria-label="Scoring format">${fmtButtons}</div>`;
   document.addEventListener("click", e => {
     const b = e.target.closest("button[data-fmt]");
-    if (b) { state.fmt = b.dataset.fmt; store.set("tsm-fmt", state.fmt); render(); return; }
+    if (b) {
+      state.fmt = b.dataset.fmt; store.set("tsm-fmt", state.fmt); render();
+      if (signedIn() && account.profile && account.profile.scoring !== state.fmt) saveProfile({ scoring: state.fmt }, null);
+      return;
+    }
     // Skip link and back-to-top use #page, which isn't a page route: handle them here.
     const skip = e.target.closest("[data-skip]");
     if (skip) { e.preventDefault(); $("#page").focus(); return; }
@@ -178,6 +183,7 @@ function boot() {
   document.addEventListener("keydown", e => { if (e.key === "Escape" && document.body.classList.contains("nav-open")) { setMenu(false); $("#menuBtn").focus(); } });
   $("#year").textContent = new Date().getFullYear();
   renderStatus();
+  initAuth();
 
   const saved = store.get("tsm-ss", null);
   if (saved) { ss.a = byId.get(saved.a) || null; ss.b = byId.get(saved.b) || null; }
@@ -190,7 +196,7 @@ function boot() {
   page.addEventListener("click", onClick);
   page.addEventListener("input", onInput);
   page.addEventListener("change", onInput);
-  page.addEventListener("submit", e => e.preventDefault());
+  page.addEventListener("submit", e => { e.preventDefault(); onAuthSubmit(e); onSettingsSubmit(e); });
   $("#playerDialog").addEventListener("click", e => {
     if (e.target.id === "playerDialog") return closePlayer();
     onClick(e);
@@ -220,7 +226,8 @@ function route(scroll) {
 function render() {
   document.querySelectorAll("button[data-fmt]").forEach(b => b.setAttribute("aria-pressed", b.dataset.fmt === state.fmt));
   const fn = { home: renderHome, matchups: renderMatchups, "start-sit": renderStartSit, "my-team": renderMyTeam,
-    players: renderPlayers, schedule: renderSchedule, teams: renderTeams, trade: renderTrade, about: renderAbout, "how-it-works": renderHow, privacy: renderPrivacy, terms: renderTerms }[state.page];
+    players: renderPlayers, schedule: renderSchedule, teams: renderTeams, trade: renderTrade, about: renderAbout, "how-it-works": renderHow, privacy: renderPrivacy, terms: renderTerms,
+    login: renderLogin, signup: renderSignup, forgot: renderForgot, reset: renderReset, account: renderAccount }[state.page];
   document.title = `${state.page === "matchups" ? `Week ${D.week} ${state.pos} Matchups` : PAGE_TITLES[state.page]} · The Sports Mattress`;
   const active = document.activeElement && document.activeElement.id;
   const caret = active && document.activeElement.selectionStart;
@@ -311,7 +318,12 @@ function onInput(e) {
     return;
   }
   if (t.id === "mtAdd" && e.type === "change") { const p = byLabel.get(t.value.trim().toLowerCase()); if (p) { addToRoster(p); } return; }
-  if (t.id === "mtSlots") { store.set("tsm-slots", t.value); return render(); }
+  if (t.id === "mtSlots") {
+    const team = signedIn() && activeTeam();
+    if (team) { team.lineup_format = t.value; saveTeamSoon(team); } else store.set("tsm-slots", t.value);
+    return render();
+  }
+  if (t.id === "teamPick" && e.type === "change") { setActiveTeam(t.value); return; }
   if (t.id === "tradeGive" || t.id === "tradeGet") {
     const p = byLabel.get(t.value.trim().toLowerCase());
     if (p) tradeAdd(t.id === "tradeGive" ? "give" : "get", p);
@@ -339,8 +351,8 @@ const ACTIONS = {
     render();
   },
   rmroster(el) { removeFromRoster(el.dataset.id); render(); },
-  clearroster() { store.set("tsm-roster", []); render(); },
-  keepexample() { store.set("tsm-roster", exampleRoster().map(p => p.id)); render(); },
+  clearroster() { setRosterIds([]); render(); },
+  keepexample() { setRosterIds(exampleRoster().map(p => p.id)); render(); },
   addroster() { const el = $("#mtAdd"); const p = el && byLabel.get(el.value.trim().toLowerCase()); if (p) addToRoster(p); },
   tadd(el) { const p = byId.get(el.dataset.id); if (p) tradeAdd(el.dataset.side, p); },
   trm(el) { tradeRemove(el.dataset.side, el.dataset.id); },
@@ -402,6 +414,13 @@ function renderHome() {
       <div class="right">${injBadge(p)}<small>${esc(p.inj.injury || "")}</small></div></div>`);
   const filed = (D.injuryTeams || []).length;
   const injNote = filed < 32 ? `<p class="inj-note">Week ${D.week} reports are in for <b>${filed} of 32</b> teams. The rest post later in the week; the site updates every morning at 5am ET.</p>` : "";
+
+  // Signed-in watchlist.
+  const watched = [...account.watch].map(id => byId.get(id)).filter(Boolean);
+  const watchHtml = !watched.length ? "" : `<section class="section"><div class="section-head"><h2>Your watchlist</h2><a href="#account">Manage →</a></div>
+    <div class="watch-grid">${watched.map(p => { const d = defFor(p), fm = formOf(playerModel(f).byId.get(p.id)); return `<div class="panel watch-card">
+      <div class="pcell">${avatar(p)}<span class="meta">${plink(p)}<small class="pline">${p.pos} · ${teamLogo(p.team, "sm")}${esc(p.team)} ${p.bye ? "· BYE" : `${p.away ? "@" : "vs"} ${teamLogo(p.opp, "sm")}${esc(p.opp)}`}</small></span></div>
+      <div class="watch-stats">${d ? rankChip(d.rank[f], `Matchup rank vs ${p.pos}`) : ""}<span><b>${unavailable(p) ? "—" : f1(project(p).proj)}</b><small>proj</small></span><span class="tag ${fm.cls}">${fm.label}</span>${injBadge(p)}</div></div>`; }).join("")}</div></section>`;
 
   // Hot and cold: last 3 games vs season average.
   const form = D.players.filter(p => p.g >= 5 && !p.bye && playedRecently(p)).map(p => {
@@ -480,6 +499,7 @@ function renderHome() {
       <div class="grid-4">${best}</div>
     </section>
 
+    ${watchHtml}
     <section class="grid-2" style="align-items:start">
       <div class="section"><div class="section-head"><h2>Usage risers</h2><span class="muted" style="font-size:13px">Snap share, last 3 vs season</span></div>
         ${listPanel(snapUp, "No big snap-share jumps this week.")}</div>
@@ -743,20 +763,31 @@ function exampleRoster() {
   return [...pick("QB", [6]), ...pick("RB", [4, 13, 24]), ...pick("WR", [5, 14, 26]), ...pick("TE", [5]), ...pick("WR", [38]), ...pick("RB", [33])];
 }
 function roster() {
+  // Signed in: the active saved team. Signed out: this browser's roster (or an example).
+  if (signedIn() && account.loaded) {
+    const t = activeTeam();
+    return { ids: t ? t.player_ids.filter(id => byId.has(id)) : [], example: false, cloud: true, team: t };
+  }
   const saved = store.get("tsm-roster", null);
   if (saved === null) return { ids: exampleRoster().map(p => p.id), example: true };
   return { ids: saved.filter(id => byId.has(id)), example: false };
 }
+async function setRosterIds(ids) {
+  if (signedIn() && account.loaded) {
+    let t = activeTeam();
+    if (!t) { t = await createTeam("My Team", ids, "standard", true); if (t) toast("Team saved to your account"); return; }
+    t.player_ids = ids; saveTeamSoon(t);
+  } else store.set("tsm-roster", ids);
+}
 function addToRoster(p) {
   const r = roster();
-  const ids = r.example ? [] : r.ids;
+  const ids = r.example ? [] : [...r.ids];
   if (!ids.includes(p.id)) ids.push(p.id);
-  store.set("tsm-roster", ids);
+  setRosterIds(ids);
   if (state.page === "my-team") render();
 }
 function removeFromRoster(id) {
-  const r = roster();
-  store.set("tsm-roster", r.ids.filter(x => x !== id));
+  setRosterIds(roster().ids.filter(x => x !== id));
 }
 function optimize(players, slots) {
   const pool = players.map(p => ({ p, proj: project(p).proj })).sort((a, b) => b.proj - a.proj);
@@ -787,7 +818,7 @@ function rosterRow(slot, x, removable) {
 }
 function renderMyTeam() {
   const r = roster();
-  const setKey = store.get("tsm-slots", "standard");
+  const setKey = r.cloud ? (r.team ? r.team.lineup_format : "standard") : store.get("tsm-slots", "standard");
   const set = SLOT_SETS[setKey] || SLOT_SETS.standard;
   const players = r.ids.map(id => byId.get(id)).filter(Boolean);
   const { lineup, bench } = optimize(players, set.slots);
@@ -795,7 +826,10 @@ function renderMyTeam() {
   const warnings = lineup.filter(x => x.p && unavailable(x.p)).map(x => `${x.p.name} is ${unavailable(x.p)}, and you don't have another ${x.slot === "FLEX" ? "flex-eligible player" : x.slot} to replace him.`);
 
   $("#page").innerHTML = `
-    ${pageHead(`Week ${D.week} · ${esc(fmtLabel())}`, "My Team", "Add your roster and get this week's best lineup, ranked by matchup-adjusted projection. Your roster is saved in this browser.")}
+    ${pageHead(`Week ${D.week} · ${esc(fmtLabel())}`, r.cloud && r.team ? esc(r.team.name) : "My Team", r.cloud
+      ? "Your roster is saved to your account. Here's this week's best lineup, ranked by matchup-adjusted projection."
+      : "Add your roster and get this week's best lineup, ranked by matchup-adjusted projection.")}
+    ${r.cloud ? teamSwitcher() : sb ? `<div class="panel panel-pad save-cta"><span><strong>Save your team.</strong> <span class="muted">Right now it's only in this browser. Create a free account to keep it, add more teams and use it on any device.</span></span><span style="display:flex;gap:8px"><a class="btn small" href="#login">Log in</a><a class="btn small primary" href="#signup">Create account</a></span></div>` : ""}
     <div class="panel panel-pad addbar">
       <div class="field" style="flex:1 1 260px"><label for="mtAdd">Add a player</label><input id="mtAdd" type="search" list="playerList" placeholder="Type a name and pick from the list" autocomplete="off"></div>
       <button type="button" class="btn primary" data-action="addroster">Add</button>
@@ -1044,6 +1078,7 @@ function fillPlayer(p) {
     <div class="pd-actions">
       <button type="button" class="btn primary" data-action="compare" data-id="${esc(p.id)}">Compare in Start / Sit</button>
       <button type="button" class="btn" data-action="roster" data-id="${esc(p.id)}">${onRoster ? "Remove from My Team" : "Add to My Team"}</button>
+      <button type="button" class="btn" data-action="watch" data-id="${esc(p.id)}">${account.watch.has(p.id) ? "★ Watching" : "☆ Watch"}</button>
     </div>
     <p class="muted" style="margin:0;font-size:12px">Season: ${f1(pts(p.ppg, f))} ${esc(fmtLabel())} pts/g over ${p.g} games, ${f1(pts(p.l3, f))} over the last ${Math.min(RECENT, p.g)}.</p>`;
 }
@@ -1095,14 +1130,13 @@ function playerModel(f = state.fmt) {
 // he's expected to miss. A side's trade value weights its best player fully and extra pieces less,
 // because one great player is worth more than two decent ones who need lineup spots.
 const DEPTH_WEIGHTS = [1, 0.75, 0.6, 0.5, 0.4, 0.35];
-// Replacement level: roughly the best player at each position left on waivers in a 12-team, 1-QB league.
-const REPLACEMENT_RANK = { QB: 13, RB: 30, WR: 36, TE: 13 };
+// Replacement level (best player left on waivers) comes from replRank(), which follows the user's league settings.
 const replCache = new Map();
 function replacementPpg(pos, f) {
-  const key = pos + f;
+  const key = pos + f + JSON.stringify(leagueSettings());
   if (!replCache.has(key)) {
     const list = D.players.filter(p => p.pos === pos && p.g >= 4).map(p => pts(p.ppg, f)).sort((a, b) => b - a);
-    replCache.set(key, list[Math.min(list.length - 1, REPLACEMENT_RANK[pos] - 1)] || 0);
+    replCache.set(key, list[Math.min(list.length - 1, replRank(pos) - 1)] || 0);
   }
   return replCache.get(key);
 }
@@ -1273,7 +1307,7 @@ function renderTrade() {
     verdictHtml = `<section class="panel trade-verdict ${cls}">
       <div class="tv-top"><div><div class="eyebrow">Verdict · ${esc(fmtLabel())}</div><p class="tv-call">${call}</p>
         <p class="tv-sub">Trade value ${f1(R.weighted)} for you vs ${f1(G.weighted)} for them (${pctDiff >= 0 ? "+" : "−"}${Math.abs(pctDiff * 100).toFixed(0)}%)</p></div>
-        <div class="tv-actions"><button type="button" class="btn small" data-action="tswap">Swap sides</button><button type="button" class="btn small" data-action="tclear">Clear</button></div></div>
+        <div class="tv-actions"><button type="button" class="btn small primary" data-action="tradeSave">${signedIn() ? "Save trade" : "Log in to save"}</button><button type="button" class="btn small" data-action="tswap">Swap sides</button><button type="button" class="btn small" data-action="tclear">Clear</button></div></div>
       <div class="meter" role="img" aria-label="Trade value: you give ${f1(G.weighted)}, you get ${f1(R.weighted)}">
         <span class="meter-give" style="width:${giveShare}%"><b>You give ${f1(G.weighted)}</b></span><span class="meter-get"><b>You get ${f1(R.weighted)}</b></span>
         <i class="meter-mid"></i></div>
@@ -1371,6 +1405,7 @@ function renderTrade() {
     ${pageHead(`Week ${D.week} · ${esc(fmtLabel())}`, "Trade Analyzer", "Put in a trade and see who wins it: rest-of-season value, playoff schedule, usage, form and whether now is the time to buy or sell.")}
     ${t.example ? `<div class="panel panel-pad example-bar"><span><strong>Example trade.</strong> <span class="muted">Add your own players to either side to start.</span></span><span style="display:flex;gap:8px"><button type="button" class="btn small" data-action="tkeep">Edit this one</button><button type="button" class="btn small" data-action="tclear">Start empty</button></span></div>` : ""}
     <section class="trade-sides">${sideList("give", give)}<div class="trade-arrow" aria-hidden="true">⇄</div>${sideList("get", get)}</section>
+    ${signedIn() && account.trades.length ? `<div class="saved-trades"><span class="muted">Saved trades:</span>${account.trades.slice(0, 8).map(x => `<button type="button" class="chip" data-action="tradeLoad" data-id="${x.id}">${esc(x.name)}</button>`).join("")}${account.trades.length > 8 ? `<a href="#account">All ${account.trades.length} →</a>` : ""}</div>` : ""}
     ${verdictHtml}
     ${all.length ? `<section class="tcards">${all.map(card).join("")}</section>` : ""}
     ${h2h}
@@ -1412,7 +1447,7 @@ function renderHow() {
       <p>Start / Sit compares two projections. Under 1 point apart is a toss-up. Players ruled out or on bye can't be started, and a doubtful player loses to a healthy one. <strong>My Team</strong> fills each lineup spot with the highest-projected eligible player: fixed positions first, then flex.</p>`],
     ["Trade Analyzer", `<ul>
       <li><strong>Rest-of-season value</strong>: the scoring rate above for every remaining game through Week ${FANTASY_END}, each adjusted for that opponent (effect halved, capped at ±20%). Games he's ruled out of are removed, and a player who has missed 2+ straight games loses another week.</li>
-      <li><strong>Trade value</strong>: projected points above a waiver-level replacement at his position (about QB${REPLACEMENT_RANK.QB}, RB${REPLACEMENT_RANK.RB}, WR${REPLACEMENT_RANK.WR}, TE${REPLACEMENT_RANK.TE} in a 12-team, 1-QB league), plus a little for depth. Each side's best player counts in full; extra players count ${DEPTH_WEIGHTS.slice(1, 4).map(w => Math.round(w * 100) + "%").join(", ")} and so on. Within 5% is a fair trade.</li>
+      <li><strong>Trade value</strong>: projected points above a waiver-level replacement at his position (about QB${replRank("QB")}, RB${replRank("RB")}, WR${replRank("WR")}, TE${replRank("TE")} in a ${leagueSettings().size}-team, ${leagueSettings().sf ? "superflex" : "1-QB"} league; signed-in users can change this in their account settings), plus a little for depth. Each side's best player counts in full; extra players count ${DEPTH_WEIGHTS.slice(1, 4).map(w => Math.round(w * 100) + "%").join(", ")} and so on. Within 5% is a fair trade.</li>
       <li><strong>Trade timing</strong> weighs recent form, touchdown dependence, changes in target or rush share and the next four opponents. "Good time to sell" means his value is probably near its peak; "selling low" means it's likely to recover.</li>
       <li><strong>Playoffs</strong> are Weeks 15–17.</li></ul>`],
     ["Usage stats", `<ul>
@@ -1430,9 +1465,13 @@ function renderHow() {
 }
 
 function renderPrivacy() {
-  $("#page").innerHTML = articlePage("Legal", "Privacy", "Short version: there are no accounts, and nothing you enter leaves your browser.", [
-    ["What we store", `<p>Your settings (scoring format), your My Team roster, your Start / Sit players and your trade are saved in your browser's local storage so they're there next time. They stay on your device and aren't sent to us. Clearing your browser data removes them.</p>`],
-    ["What we don't collect", `<p>No sign-up, no names or emails, no payment details, and no advertising or analytics trackers.</p>`],
+  $("#page").innerHTML = articlePage("Legal", "Privacy", "Accounts are optional. Here's exactly what we keep and why.", [
+    ["Without an account", `<p>Everything you enter (your roster, Start / Sit picks, trades and scoring format) is saved only in your browser's local storage. It stays on your device and isn't sent to us. Clearing your browser data removes it.</p>`],
+    ["With an account", `<p>If you create an account we store your <strong>email address</strong>, an optional <strong>display name</strong>, your <strong>password</strong> (as a secure hash we can't read), and what you choose to save: <strong>teams, saved trades, watchlist and settings</strong> (scoring format, league size, superflex). This is used only to run your account. We don't sell it or share it.</p>
+      <p>Account data is stored with <a href="https://supabase.com/" target="_blank" rel="noopener">Supabase</a> in the United States. Each account can only read and change its own data. You stay logged in on a device until you log out.</p>`],
+    ["Deleting your data", `<p>Delete your account any time from <a href="#account">Your Account</a>. That permanently removes your login and everything saved to it.</p>`],
+    ["Emails", `<p>We only email you for account tasks you start, like confirming your address or resetting your password. No newsletters or marketing.</p>`],
+    ["What we don't collect", `<p>No payment details and no advertising or analytics trackers.</p>`],
     ["Other services", `<p>To show the site, your browser loads fonts from Google Fonts, player photos from NFL.com and team logos from ESPN. Those services receive standard request information (like your IP address) under their own privacy policies. The site is hosted on GitHub Pages.</p>`],
     ["Changes", `<p>If this changes (for example, if we add analytics), this page will be updated first.</p>`],
   ]);
@@ -1443,8 +1482,360 @@ function renderTerms() {
     ["For entertainment and research", `<p>Projections, rankings, grades and trade verdicts are estimates from public data and simple models. They aren't guarantees, and they aren't betting or financial advice. Make your own decisions.</p>`],
     ["Accuracy", `<p>Data comes from third-party sources and is updated on a schedule, so it can be incomplete, delayed or wrong, especially around late injury news. The site is provided "as is", without warranties of any kind.</p>`],
     ["Not affiliated", `<p>The Sports Mattress isn't affiliated with or endorsed by the NFL, its teams, ESPN or any fantasy platform. Team names, logos and player images belong to their owners and are shown for identification only.</p>`],
+    ["Accounts", `<p>Accounts are free and optional. Keep your password private; you're responsible for activity on your account. We may remove accounts used for abuse or automated scraping. You can delete your account at any time.</p>`],
     ["Data sources", `<p>Stats from <a href="https://github.com/nflverse/nflverse-data" target="_blank" rel="noopener">nflverse</a>. Weather from <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a>.</p>`],
     ["Changes", `<p>These terms may change; the version on this page is the current one.</p>`],
   ]);
 }
+// ================================================================== ACCOUNTS (Supabase)
+// Sign-up, login and saved data. The anon key is public by design; row level security in the
+// database limits every user to their own rows.
+const SB_CFG = window.TSM_SB || {};
+const sb = window.supabase && SB_CFG.url ? window.supabase.createClient(SB_CFG.url, SB_CFG.key, {
+  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storageKey: "tsm-auth" },
+}) : null;
+const account = { user: null, profile: null, teams: [], activeTeamId: null, trades: [], watch: new Set(), loaded: false, recovery: false };
+
+function toast(msg, kind = "") {
+  let el = $("#toast");
+  if (!el) { el = document.createElement("div"); el.id = "toast"; el.setAttribute("role", "status"); document.body.appendChild(el); }
+  el.className = "toast show " + kind; el.textContent = msg;
+  clearTimeout(toast.t); toast.t = setTimeout(() => { el.className = "toast " + kind; }, 2600);
+}
+function signedIn() { return !!account.user; }
+function displayName() { return (account.profile && account.profile.display_name) || (account.user && account.user.email.split("@")[0]) || ""; }
+function friendlyError(e) {
+  const m = (e && (e.message || e.error_description)) || String(e);
+  if (/invalid login credentials/i.test(m)) return "That email and password don't match. Check them and try again.";
+  if (/email not confirmed/i.test(m)) return "Confirm your email first: open the link we sent you, then log in.";
+  if (/already registered|already been registered/i.test(m)) return "There's already an account with that email. Log in instead, or reset your password.";
+  if (/rate limit/i.test(m)) return "Too many attempts. Wait a few minutes and try again.";
+  if (/error sending|not authorized/i.test(m)) return "We couldn't send the email right now. Try again later.";
+  if (/password/i.test(m) && /characters|short|weak/i.test(m)) return "Use a password of at least 8 characters.";
+  return m;
+}
+
+async function loadCloud() {
+  if (!sb || !account.user) return;
+  const uid = account.user.id;
+  const [prof, teams, trades, watch] = await Promise.all([
+    sb.from("profiles").select("*").eq("id", uid).maybeSingle(),
+    sb.from("teams").select("*").order("created_at"),
+    sb.from("saved_trades").select("*").order("created_at", { ascending: false }),
+    sb.from("watchlist").select("player_id"),
+  ]);
+  account.profile = prof.data || { id: uid, scoring: state.fmt, lineup_format: "standard", league_size: 12, superflex: false };
+  account.teams = teams.data || [];
+  account.trades = trades.data || [];
+  account.watch = new Set((watch.data || []).map(r => r.player_id));
+  account.activeTeamId = account.profile.active_team_id || (account.teams[0] && account.teams[0].id) || null;
+  // First login on this device: bring over a team built while logged out.
+  const local = store.get("tsm-roster", null);
+  if (!account.teams.length && Array.isArray(local) && local.length) {
+    const t = await createTeam("My Team", local.filter(id => byId.has(id)), store.get("tsm-slots", "standard"), true);
+    if (t) toast("Your team was saved to your account.");
+  }
+  if (account.profile.scoring && D.formats[account.profile.scoring]) { state.fmt = account.profile.scoring; store.set("tsm-fmt", state.fmt); }
+  account.loaded = true;
+  clearSettingsCaches();
+}
+
+function initAuth() {
+  renderAcct();
+  if (!sb) return;
+  sb.auth.onAuthStateChange((event, session) => {
+    const was = account.user && account.user.id;
+    account.user = session ? session.user : null;
+    if (event === "PASSWORD_RECOVERY") { account.recovery = true; location.hash = "reset"; }
+    if (account.user && account.user.id !== was) {
+      // Defer database calls out of the auth callback, as Supabase recommends.
+      setTimeout(() => loadCloud().then(() => { renderAcct(); render(); }), 0);
+    } else if (!account.user && was) {
+      Object.assign(account, { profile: null, teams: [], activeTeamId: null, trades: [], watch: new Set(), loaded: false });
+      clearSettingsCaches(); renderAcct(); render();
+    }
+    renderAcct();
+  });
+}
+
+function renderAcct() {
+  const html = signedIn()
+    ? `<a class="acct-chip" href="#account" title="Your account"><span class="acct-av">${esc(initials(displayName()) || "?")}</span><span class="acct-name">${esc(displayName())}</span></a>`
+    : `<a class="btn small ghost-inv" href="#login">Log in</a><a class="btn small" href="#signup">Sign up</a>`;
+  const a = $("#acct"); if (a) a.innerHTML = sb ? html : "";
+  const m = $("#navAcct");
+  if (m) m.innerHTML = !sb ? "" : signedIn()
+    ? `<a href="#account">My Account (${esc(displayName())})</a>`
+    : `<a href="#login">Log in</a><a href="#signup">Create account</a>`;
+}
+
+// ---------------------------------------------------------------- saved data helpers
+function activeTeam() { return account.teams.find(t => t.id === account.activeTeamId) || account.teams[0] || null; }
+let teamSaveTimer = 0;
+function saveTeamSoon(team) {
+  clearTimeout(teamSaveTimer);
+  teamSaveTimer = setTimeout(async () => {
+    const { error } = await sb.from("teams").update({ player_ids: team.player_ids, lineup_format: team.lineup_format, name: team.name }).eq("id", team.id);
+    if (error) toast("Couldn't save your team: " + friendlyError(error), "bad"); else toast("Team saved");
+  }, 400);
+}
+async function createTeam(name, ids = [], fmt = "standard", quiet = false) {
+  const { data, error } = await sb.from("teams").insert({ name, player_ids: ids, lineup_format: fmt }).select().single();
+  if (error) { toast(friendlyError(error), "bad"); return null; }
+  account.teams.push(data);
+  await setActiveTeam(data.id, true);
+  if (!quiet) toast(`Created “${name}”`);
+  return data;
+}
+async function setActiveTeam(id, quiet) {
+  account.activeTeamId = id;
+  if (account.profile) account.profile.active_team_id = id;
+  await sb.from("profiles").update({ active_team_id: id }).eq("id", account.user.id);
+  if (!quiet) render();
+}
+async function saveProfile(patch, msg = "Saved") {
+  Object.assign(account.profile, patch);
+  const { error } = await sb.from("profiles").update(patch).eq("id", account.user.id);
+  if (error) toast(friendlyError(error), "bad"); else if (msg) toast(msg);
+}
+async function toggleWatch(id) {
+  if (!signedIn()) { toast("Log in to keep a watchlist"); location.hash = "login"; return; }
+  if (account.watch.has(id)) {
+    account.watch.delete(id);
+    const { error } = await sb.from("watchlist").delete().eq("player_id", id);
+    if (error) { account.watch.add(id); toast(friendlyError(error), "bad"); } else toast("Removed from watchlist");
+  } else {
+    account.watch.add(id);
+    const { error } = await sb.from("watchlist").insert({ player_id: id });
+    if (error) { account.watch.delete(id); toast(friendlyError(error), "bad"); } else toast("Added to watchlist");
+  }
+  render();
+}
+
+// League settings shape the Trade Analyzer's replacement levels.
+function leagueSettings() {
+  if (account.profile) return { size: account.profile.league_size || 12, sf: !!account.profile.superflex };
+  return { size: 12, sf: false };
+}
+function replRank(pos) {
+  const { size, sf } = leagueSettings();
+  return { QB: sf ? size * 2 + 1 : size + 1, RB: Math.round(size * 2.5), WR: size * 3, TE: size + 1 }[pos];
+}
+function clearSettingsCaches() { replCache.clear(); }
+
+// ---------------------------------------------------------------- auth pages
+function authShell(title, lede, body, foot) {
+  return `<section class="auth-wrap"><div class="panel auth-card">
+    <div class="eyebrow">The Sports Mattress</div><h1>${title}</h1>${lede ? `<p class="lede">${lede}</p>` : ""}
+    ${body}${foot ? `<div class="auth-foot">${foot}</div>` : ""}</div>
+    <aside class="auth-side"><h2>Free account perks</h2><ul>
+      <li><b>Save your teams</b> for every league and get the best lineup each week.</li>
+      <li><b>Save trades</b> from the Trade Analyzer and come back to them.</li>
+      <li><b>Watchlist</b> players and see their matchups on the home page.</li>
+      <li><b>Your settings everywhere</b>: scoring format and league size on any device.</li></ul></aside></section>`;
+}
+const noAuth = () => `<p class="auth-msg bad">Accounts aren't available right now. Please try again later.</p>`;
+function renderLogin() {
+  if (signedIn()) { location.hash = "account"; return; }
+  $("#page").innerHTML = authShell("Log in", "Welcome back. Your teams, trades and watchlist are waiting.",
+    sb ? `<form class="auth-form" id="loginForm" novalidate>
+      <div class="field"><label for="liEmail">Email</label><input id="liEmail" type="email" autocomplete="email" required></div>
+      <div class="field"><label for="liPass">Password</label><input id="liPass" type="password" autocomplete="current-password" required></div>
+      <p class="auth-msg" id="authMsg" role="alert"></p>
+      <button type="submit" class="btn primary wide">Log in</button>
+      <a class="auth-link" href="#forgot">Forgot your password?</a></form>` : noAuth(),
+    `New here? <a href="#signup">Create a free account</a>`);
+}
+function renderSignup() {
+  if (signedIn()) { location.hash = "account"; return; }
+  $("#page").innerHTML = authShell("Create your account", "Free. Save your teams, trades and watchlist, and stay logged in on this device.",
+    sb ? `<form class="auth-form" id="signupForm" novalidate>
+      <div class="field"><label for="suName">Display name</label><input id="suName" type="text" maxlength="40" autocomplete="nickname" placeholder="What should we call you?"></div>
+      <div class="field"><label for="suEmail">Email</label><input id="suEmail" type="email" autocomplete="email" required></div>
+      <div class="field"><label for="suPass">Password</label><input id="suPass" type="password" autocomplete="new-password" minlength="8" required><small class="muted">At least 8 characters.</small></div>
+      <p class="auth-msg" id="authMsg" role="alert"></p>
+      <button type="submit" class="btn primary wide">Create account</button>
+      <p class="muted" style="margin:0;font-size:12px">By creating an account you agree to the <a href="#terms">Terms of Use</a> and <a href="#privacy">Privacy</a> policy.</p></form>` : noAuth(),
+    `Already have an account? <a href="#login">Log in</a>`);
+}
+function renderForgot() {
+  $("#page").innerHTML = authShell("Reset your password", "Enter your email and we'll send you a link to set a new password.",
+    sb ? `<form class="auth-form" id="forgotForm" novalidate>
+      <div class="field"><label for="fgEmail">Email</label><input id="fgEmail" type="email" autocomplete="email" required></div>
+      <p class="auth-msg" id="authMsg" role="alert"></p>
+      <button type="submit" class="btn primary wide">Send reset link</button></form>` : noAuth(),
+    `Remembered it? <a href="#login">Log in</a>`);
+}
+function renderReset() {
+  $("#page").innerHTML = authShell("Set a new password", signedIn() ? "Choose a new password for your account." : "Open the reset link from your email to set a new password.",
+    signedIn() ? `<form class="auth-form" id="resetForm" novalidate>
+      <div class="field"><label for="rsPass">New password</label><input id="rsPass" type="password" autocomplete="new-password" minlength="8" required><small class="muted">At least 8 characters.</small></div>
+      <p class="auth-msg" id="authMsg" role="alert"></p>
+      <button type="submit" class="btn primary wide">Save new password</button></form>` : "",
+    `<a href="#login">Back to log in</a>`);
+}
+
+async function onAuthSubmit(e) {
+  const f = e.target, msg = $("#authMsg");
+  if (!f.matches || !f.matches(".auth-form")) return;
+  e.preventDefault();
+  const btn = f.querySelector("button[type=submit]"), say = (t, ok) => { msg.textContent = t; msg.className = "auth-msg" + (ok ? " ok" : " bad"); };
+  const val = id => (document.getElementById(id) || {}).value || "";
+  btn.disabled = true;
+  try {
+    if (f.id === "loginForm") {
+      if (!val("liEmail") || !val("liPass")) return say("Enter your email and password.");
+      const { error } = await sb.auth.signInWithPassword({ email: val("liEmail").trim(), password: val("liPass") });
+      if (error) return say(friendlyError(error));
+      toast("Welcome back!"); location.hash = "my-team";
+    } else if (f.id === "signupForm") {
+      if (!/^\S+@\S+\.\S+$/.test(val("suEmail").trim())) return say("Enter a valid email address.");
+      if (val("suPass").length < 8) return say("Use a password of at least 8 characters.");
+      const { data, error } = await sb.auth.signUp({
+        email: val("suEmail").trim(), password: val("suPass"),
+        options: { data: { display_name: val("suName").trim() || undefined }, emailRedirectTo: SB_CFG.site || location.href.split("#")[0] },
+      });
+      if (error) return say(friendlyError(error));
+      if (data.session) { toast("Account created. You're logged in!"); location.hash = "my-team"; }
+      else if (data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) say("There's already an account with that email. Log in instead, or reset your password.");
+      else say("Almost done: check your email and click the confirmation link, then log in.", true);
+    } else if (f.id === "forgotForm") {
+      if (!/^\S+@\S+\.\S+$/.test(val("fgEmail").trim())) return say("Enter a valid email address.");
+      const { error } = await sb.auth.resetPasswordForEmail(val("fgEmail").trim(), { redirectTo: SB_CFG.site || location.href.split("#")[0] });
+      if (error) return say(friendlyError(error));
+      say("If there's an account with that email, a reset link is on its way.", true);
+    } else if (f.id === "resetForm") {
+      if (val("rsPass").length < 8) return say("Use a password of at least 8 characters.");
+      const { error } = await sb.auth.updateUser({ password: val("rsPass") });
+      if (error) return say(friendlyError(error));
+      account.recovery = false; toast("Password updated"); location.hash = "account";
+    } else if (f.id === "deleteForm") {
+      if (val("delConfirm").trim().toUpperCase() !== "DELETE") return say("Type DELETE to confirm.");
+      const { error } = await sb.rpc("delete_my_account");
+      if (error) return say(friendlyError(error));
+      await sb.auth.signOut({ scope: "local" });
+      store.set("tsm-roster", null);
+      toast("Your account was deleted."); location.hash = "home";
+    }
+  } finally { btn.disabled = false; }
+}
+
+// ---------------------------------------------------------------- account page
+function renderAccount() {
+  if (!sb) { $("#page").innerHTML = noAuth(); return; }
+  if (!signedIn()) { location.hash = "login"; return; }
+  if (!account.loaded) { $("#page").innerHTML = `<p class="loading">Loading your account…</p>`; return; }
+  const pr = account.profile, ls = leagueSettings();
+  const teamRows = account.teams.map(t => `<div class="list-row">
+      <div><b>${esc(t.name)}</b>${t.id === account.activeTeamId ? ` <span class="badge ok">Active</span>` : ""}<small class="muted" style="display:block">${t.player_ids.length} players · ${esc((SLOT_SETS[t.lineup_format] || SLOT_SETS.standard).label)}</small></div>
+      <div class="row-actions"><button type="button" class="btn small" data-action="acctOpenTeam" data-id="${t.id}">Open</button>
+        <button type="button" class="btn small" data-action="teamDelete" data-id="${t.id}">Delete</button></div></div>`).join("");
+  const tradeRows = account.trades.map(t => `<div class="list-row">
+      <div><b>${esc(t.name)}</b><small class="muted" style="display:block">${esc(t.give.map(id => (byId.get(id) || {}).name || "?").join(", "))} for ${esc(t.get.map(id => (byId.get(id) || {}).name || "?").join(", "))}</small></div>
+      <div class="row-actions"><button type="button" class="btn small" data-action="tradeLoad" data-id="${t.id}">Open</button>
+        <button type="button" class="btn small" data-action="tradeDelete" data-id="${t.id}">Delete</button></div></div>`).join("");
+  const watchRows = [...account.watch].map(id => byId.get(id)).filter(Boolean).map(p => `<div class="list-row">
+      <div class="pcell">${avatar(p)}<span class="meta">${plink(p)} ${injBadge(p)}<small>${p.pos} · ${esc(p.team)} · ${esc(oppText(p))}</small></span></div>
+      <div class="row-actions"><button type="button" class="btn small" data-action="watch" data-id="${esc(p.id)}">Remove</button></div></div>`).join("");
+  $("#page").innerHTML = `
+    ${pageHead("Your account", `Hi, ${esc(displayName())}`, `Signed in as ${esc(account.user.email)}.`)}
+    <section class="grid-2" style="align-items:start">
+      <div class="section">
+        <div class="section-head"><h2>Profile and settings</h2></div>
+        <form class="panel panel-pad settings-form" id="settingsForm">
+          <div class="field"><label for="stName">Display name</label><input id="stName" type="text" maxlength="40" value="${esc(pr.display_name || "")}"></div>
+          <div class="field"><label for="stScoring">Default scoring</label><select id="stScoring">${Object.entries(D.formats).map(([k, v]) => `<option value="${k}"${k === pr.scoring ? " selected" : ""}>${v}</option>`).join("")}</select></div>
+          <div class="field-row">
+            <div class="field"><label for="stSize">League size</label><select id="stSize">${[8, 10, 12, 14, 16].map(n => `<option value="${n}"${n === ls.size ? " selected" : ""}>${n} teams</option>`).join("")}</select></div>
+            <div class="field"><label for="stSf">Quarterbacks</label><select id="stSf"><option value="0"${ls.sf ? "" : " selected"}>1 QB</option><option value="1"${ls.sf ? " selected" : ""}>Superflex / 2 QB</option></select></div>
+          </div>
+          <p class="muted" style="margin:0;font-size:12px">League size and quarterbacks set how the Trade Analyzer values each position.</p>
+          <button type="submit" class="btn primary">Save settings</button>
+        </form>
+        <div class="section-head"><h2>Account</h2></div>
+        <div class="panel panel-pad acct-actions">
+          <a class="btn" href="#reset">Change password</a>
+          <button type="button" class="btn" data-action="logout">Log out</button>
+          <details class="danger"><summary>Delete account</summary>
+            <form class="auth-form" id="deleteForm" novalidate><p class="muted" style="margin:0;font-size:13px">This permanently deletes your account, teams, trades and watchlist. Type <b>DELETE</b> to confirm.</p>
+              <input id="delConfirm" type="text" autocomplete="off"><p class="auth-msg" id="authMsg" role="alert"></p>
+              <button type="submit" class="btn danger-btn">Delete my account</button></form></details>
+        </div>
+      </div>
+      <div class="section">
+        <div class="section-head"><h2>Your teams</h2><button type="button" class="btn small" data-action="teamNew">New team</button></div>
+        <div class="panel list">${teamRows || `<p class="empty">No teams yet. <a href="#my-team">Build one on My Team</a>.</p>`}</div>
+        <div class="section-head"><h2>Saved trades</h2><a href="#trade">Trade Analyzer →</a></div>
+        <div class="panel list">${tradeRows || `<p class="empty">No saved trades. Use <b>Save trade</b> on the Trade Analyzer.</p>`}</div>
+        <div class="section-head"><h2>Watchlist</h2></div>
+        <div class="panel list">${watchRows || `<p class="empty">Nobody yet. Open any player and tap <b>☆ Watch</b>.</p>`}</div>
+      </div>
+    </section>`;
+}
+async function onSettingsSubmit(e) {
+  if (e.target.id !== "settingsForm") return;
+  e.preventDefault();
+  const patch = {
+    display_name: $("#stName").value.trim().slice(0, 40) || null,
+    scoring: $("#stScoring").value, league_size: Number($("#stSize").value), superflex: $("#stSf").value === "1",
+  };
+  await saveProfile(patch, "Settings saved");
+  state.fmt = patch.scoring; store.set("tsm-fmt", state.fmt); clearSettingsCaches(); renderAcct(); render();
+}
+
+// ---------------------------------------------------------------- my team (signed in)
+function teamSwitcher() {
+  const t = activeTeam();
+  return `<div class="panel panel-pad team-bar">
+    <div class="field"><label for="teamPick">Team</label><select id="teamPick">${account.teams.map(x => `<option value="${x.id}"${t && x.id === t.id ? " selected" : ""}>${esc(x.name)}</option>`).join("")}</select></div>
+    <div class="team-bar-actions">
+      <button type="button" class="btn small" data-action="teamNew">New team</button>
+      ${t ? `<button type="button" class="btn small" data-action="teamRename">Rename</button><button type="button" class="btn small" data-action="teamDelete" data-id="${t.id}">Delete</button>` : ""}
+    </div>
+    <span class="muted team-saved">Saved to your account</span>
+  </div>`;
+}
+function inlinePrompt(label, value, onSave) {
+  // In-page prompt (browser prompt() is unreliable in embedded views).
+  const box = document.createElement("form");
+  box.className = "panel panel-pad inline-prompt";
+  box.innerHTML = `<label for="ipVal">${esc(label)}</label><div class="pro-code-row"><input id="ipVal" type="text" maxlength="40" value="${esc(value || "")}"><button type="submit" class="btn primary">Save</button><button type="button" class="btn" data-cancel>Cancel</button></div>`;
+  $("#page").prepend(box);
+  const inp = box.querySelector("input"); inp.focus(); inp.select();
+  box.addEventListener("submit", ev => { ev.preventDefault(); ev.stopPropagation(); const v = inp.value.trim(); if (v) { box.remove(); onSave(v); } });
+  box.querySelector("[data-cancel]").addEventListener("click", ev => { ev.stopPropagation(); box.remove(); });
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+Object.assign(ACTIONS, {
+  logout: async () => { await sb.auth.signOut(); toast("Logged out"); location.hash = "home"; },
+  watch: el => toggleWatch(el.dataset.id),
+  teamNew: () => inlinePrompt("Name your new team", `Team ${account.teams.length + 1}`, async name => { await createTeam(name); location.hash = "my-team"; render(); }),
+  teamRename: () => { const t = activeTeam(); if (t) inlinePrompt("Rename team", t.name, name => { t.name = name; saveTeamSoon(t); render(); }); },
+  teamDelete: async el => {
+    const t = account.teams.find(x => x.id === el.dataset.id); if (!t) return;
+    if (el.dataset.sure !== "1") { el.dataset.sure = "1"; el.textContent = "Tap again to delete"; setTimeout(() => { if (el.isConnected) { el.dataset.sure = ""; el.textContent = "Delete"; } }, 3000); return; }
+    const { error } = await sb.from("teams").delete().eq("id", t.id);
+    if (error) return toast(friendlyError(error), "bad");
+    account.teams = account.teams.filter(x => x.id !== t.id);
+    if (account.activeTeamId === t.id) await setActiveTeam(account.teams[0] ? account.teams[0].id : null, true);
+    toast(`Deleted “${t.name}”`); render();
+  },
+  acctOpenTeam: async el => { await setActiveTeam(el.dataset.id, true); location.hash = "my-team"; },
+  tradeSave: () => {
+    if (!signedIn()) { toast("Log in to save trades"); location.hash = "login"; return; }
+    const t = tradeState(), nm = ids => ids.map(id => lastName((byId.get(id) || { name: "?" }).name)).join(" + ");
+    inlinePrompt("Name this trade", `${nm(t.give)} for ${nm(t.get)}`.slice(0, 60), async name => {
+      const { data, error } = await sb.from("saved_trades").insert({ name, give: t.give, get: t.get }).select().single();
+      if (error) return toast(friendlyError(error), "bad");
+      account.trades.unshift(data); toast("Trade saved"); render();
+    });
+  },
+  tradeLoad: el => { const t = account.trades.find(x => x.id === el.dataset.id); if (!t) return; store.set("tsm-trade", { give: t.give, get: t.get }); location.hash = "trade"; render(); },
+  tradeDelete: async el => {
+    const { error } = await sb.from("saved_trades").delete().eq("id", el.dataset.id);
+    if (error) return toast(friendlyError(error), "bad");
+    account.trades = account.trades.filter(x => x.id !== el.dataset.id); toast("Trade deleted"); render();
+  },
+});
 })();

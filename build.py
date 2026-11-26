@@ -31,6 +31,11 @@ ROOT = Path(__file__).resolve().parent
 # Public address of the site (used for share previews, sitemap and the 404 redirect).
 # Change this if you move to a custom domain, e.g. "https://thesportsmattress.com/".
 SITE_URL = "https://jasonbischer-arch.github.io/fantasyfootballmatchups/"
+# Supabase project for accounts. The anon key is meant to be public: row level security in the
+# database limits every signed-in user to their own rows.
+SUPABASE_URL = "https://wwqyqvkuaxchfcunajwt.supabase.co"
+SUPABASE_ANON_KEY = ("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind3cXlxdmt1YXhjaGZjdW5hand0"
+                     "Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTU2NTIxMzYsImV4cCI6MjExMTIyODEzNn0.swTtGyHesNC1_35A2XeZWsmSXUHfhpmgeJMb7V1HvN0")
 CACHE = ROOT / ".cache"
 OUT = ROOT / "site"
 
@@ -742,6 +747,7 @@ def build_players(plog, depth, injuries, opponent, target, snaps, pbp_player, te
 def render_html(downloads: bool, build_id: str) -> str:
     html = (ROOT / "template" / "index.html").read_text()
     html = html.replace("__BUILD__", build_id).replace("__SITE_URL__", SITE_URL)
+    html = html.replace("/*__SUPABASE__*/null", json.dumps({"url": SUPABASE_URL, "key": SUPABASE_ANON_KEY, "site": SITE_URL}))
     return html.replace("/*__DOWNLOADS__*/true", "true" if downloads else "false")
 
 

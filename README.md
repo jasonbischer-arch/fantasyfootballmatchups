@@ -21,6 +21,23 @@ the same scale used across the site.
 
 Scoring format (PPR / Half PPR / Standard) switches everywhere from the header.
 
+## Accounts
+
+Optional free accounts run on [Supabase](https://supabase.com/) (project `the-sports-mattress`). The site stays a
+static GitHub Pages site; the browser talks to Supabase directly.
+
+- **What's saved:** profile (display name), settings (scoring format, league size, superflex), teams (several per
+  account, each with a roster and lineup format), saved trades and a watchlist. Logged-out visitors keep using
+  browser-only storage, and a team built before signing up is imported on first login.
+- **Security:** every table has row level security so users can only read and change their own rows. The anon key in
+  `build.py` is meant to be public. `delete_my_account()` lets a signed-in user delete their own account.
+- **Sessions** persist in the browser and refresh automatically, so users stay logged in until they log out.
+- **Email:** Supabase's built-in mailer only sends to your Supabase team's addresses and is rate-limited. Before
+  launch, either turn off **Authentication → Sign In / Providers → Email → Confirm email**, or set up custom SMTP
+  (Authentication → Emails → SMTP Settings, e.g. with Resend or Postmark). Password-reset emails need custom SMTP.
+- Set **Authentication → URL Configuration → Site URL** to the site's address so email links come back to it.
+- `template/assets/vendor/supabase-2.119.0.js` is the Supabase browser client (MIT), hosted with the site.
+
 ## Data
 
 All free from [nflverse](https://github.com/nflverse/nflverse-data), no API keys: weekly player stats,
