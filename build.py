@@ -28,6 +28,9 @@ from collections import defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
+# Public address of the site (used for share previews, sitemap and the 404 redirect).
+# Change this if you move to a custom domain, e.g. "https://thesportsmattress.com/".
+SITE_URL = "https://jasonbischer-arch.github.io/fantasyfootballmatchups/"
 CACHE = ROOT / ".cache"
 OUT = ROOT / "site"
 
@@ -686,7 +689,7 @@ def build_players(plog, depth, injuries, opponent, target, snaps, pbp_player, te
 
 def render_html(downloads: bool, build_id: str) -> str:
     html = (ROOT / "template" / "index.html").read_text()
-    html = html.replace("__BUILD__", build_id)
+    html = html.replace("__BUILD__", build_id).replace("__SITE_URL__", SITE_URL)
     return html.replace("/*__DOWNLOADS__*/true", "true" if downloads else "false")
 
 
@@ -698,6 +701,16 @@ def write_site(data: dict, preview: Path | None) -> None:
     shutil.copytree(ROOT / "template" / "assets", OUT / "assets", dirs_exist_ok=True)
     (OUT / "index.html").write_text('<!doctype html>\n<html lang="en">\n' + render_html(True, build_id) + "\n</html>\n")
     write_xlsx(data)
+    today = dt.date.today().isoformat()
+    (OUT / "robots.txt").write_text(f"User-agent: *\nAllow: /\nSitemap: {SITE_URL}sitemap.xml\n")
+    (OUT / "sitemap.xml").write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        f"  <url><loc>{SITE_URL}</loc><lastmod>{today}</lastmod><changefreq>weekly</changefreq></url>\n</urlset>\n")
+    (OUT / "404.html").write_text(
+        '<!doctype html>\n<html lang="en"><meta charset="utf-8"><title>Page not found · The Sports Mattress</title>'
+        f'<meta http-equiv="refresh" content="0; url={SITE_URL}"><link rel="canonical" href="{SITE_URL}">'
+        f'<body style="font-family:system-ui;background:#111a2a;color:#f2f5fb;padding:40px">'
+        f'<p>That page doesn\'t exist. <a style="color:#ffd966" href="{SITE_URL}">Go to The Sports Mattress</a>.</p></body></html>\n')
     print(f"Wrote {OUT / 'index.html'}", file=sys.stderr)
     if preview:
         # Body-only copy without download links, for hosts that wrap pages themselves.

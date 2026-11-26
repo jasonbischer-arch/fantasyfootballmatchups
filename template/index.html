@@ -1,22 +1,49 @@
-<title>The Sports Mattress</title>
+<title>The Sports Mattress · Fantasy Football Matchups, Start/Sit and Trade Analyzer</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="description" content="Weekly fantasy football matchup charts, start/sit comparisons, snap and target share, strength of schedule and team tendencies.">
+<meta name="description" content="Free weekly fantasy football tools: color-coded matchup charts, start/sit calls, a trade analyzer, snap and target share, strength of schedule and kickoff weather. Updated every Wednesday and Sunday.">
+<meta name="theme-color" content="#111a2a">
+<link rel="canonical" href="__SITE_URL__">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="The Sports Mattress">
+<meta property="og:title" content="The Sports Mattress · Fantasy football matchups you can sleep on">
+<meta property="og:description" content="Weekly matchup charts, start/sit calls, a trade analyzer, usage stats and strength of schedule. Free, updated every Wednesday and Sunday.">
+<meta property="og:url" content="__SITE_URL__">
+<meta property="og:image" content="__SITE_URL__assets/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="The Sports Mattress · Fantasy football matchups you can sleep on">
+<meta name="twitter:description" content="Weekly matchup charts, start/sit calls, a trade analyzer, usage stats and strength of schedule.">
+<meta name="twitter:image" content="__SITE_URL__assets/og.png">
 <link rel="icon" type="image/svg+xml" href="assets/mark.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/icon-32.png">
+<link rel="apple-touch-icon" href="assets/icon-180.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Figtree:wght@400;500;600;700;800&display=swap">
 <link rel="stylesheet" href="assets/app.css?v=__BUILD__">
 
+<a class="skip" href="#page" data-skip>Skip to content</a>
+
 <header class="site-head">
+  <div class="status-bar">
+    <div class="status-inner">
+      <span class="status-live"><i aria-hidden="true"></i><span id="statusWeek">This week's matchups</span></span>
+      <span class="status-meta" id="statusMeta"></span>
+    </div>
+  </div>
   <div class="head-inner">
     <a class="brand" href="#home" aria-label="The Sports Mattress home">
       <span class="wordmark">The Sports Mattress</span>
     </a>
     <div class="head-tools">
-      <span class="week-pill" id="weekPill"></span>
       <div class="seg seg-sm" role="group" aria-label="Scoring format" id="fmtSeg"></div>
+      <a class="btn head-cta" href="#trade">Analyze a trade</a>
+      <button type="button" class="menu-btn" id="menuBtn" aria-expanded="false" aria-controls="nav" aria-label="Open menu">
+        <span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span>
+      </button>
     </div>
   </div>
   <nav class="site-nav" aria-label="Main">
@@ -29,6 +56,7 @@
       <a href="#players" data-page="players">Players</a>
       <a href="#schedule" data-page="schedule">Schedule</a>
       <a href="#teams" data-page="teams">Teams</a>
+      <div class="nav-mobile-extra" id="navFmt"></div>
     </div>
   </nav>
   <div class="scale-band" aria-hidden="true"></div>
@@ -39,14 +67,42 @@
 </main>
 
 <footer class="site-foot">
-  <div class="foot-inner">
+  <div class="foot-grid">
     <div class="foot-brand">
-      <strong>The Sports Mattress</strong>
-      <span>Matchups you can sleep on.</span>
+      <a href="#home" class="wordmark foot-word">The Sports Mattress</a>
+      <p class="foot-tag">Matchups you can sleep on.</p>
+      <p>Free fantasy football matchup charts, start/sit calls, trade analysis and usage stats, rebuilt every Wednesday at 10am and Sunday at 5am Eastern.</p>
+      <div class="foot-scale" aria-hidden="true"><span>Tough</span><i></i><span>Great</span></div>
     </div>
-    <p>Data from <a href="https://github.com/nflverse/nflverse-data" target="_blank" rel="noopener">nflverse</a>: weekly stats, schedules and betting lines, depth charts, injury reports, snap counts and play-by-play. Updated Wednesdays at 10am and Sundays at 5am Eastern.</p>
-    <p>Scoring: 4 pt passing TD, 1 pt per 25 passing yards, 1 pt per 10 rushing or receiving yards, 6 pt rushing or receiving TD, −2 per interception or fumble lost; PPR adds 1 per catch, Half PPR 0.5.</p>
-    <p class="fine">Not affiliated with the NFL or any team. For entertainment and fantasy research.</p>
+    <nav class="foot-col" aria-label="Tools">
+      <h2>Tools</h2>
+      <a href="#qb">Matchup Charts</a>
+      <a href="#start-sit">Start / Sit</a>
+      <a href="#my-team">My Team</a>
+      <a href="#trade">Trade Analyzer</a>
+    </nav>
+    <nav class="foot-col" aria-label="Research">
+      <h2>Research</h2>
+      <a href="#players">Player Usage</a>
+      <a href="#schedule">Strength of Schedule</a>
+      <a href="#teams">Team Tendencies</a>
+      <a href="#home">This Week's Slate</a>
+    </nav>
+    <nav class="foot-col" aria-label="Site">
+      <h2>More</h2>
+      <a href="#about">About</a>
+      <a href="#how-it-works">How It Works</a>
+      <a href="#privacy">Privacy</a>
+      <a href="#terms">Terms of Use</a>
+    </nav>
+  </div>
+  <div class="foot-bottom">
+    <div class="foot-bottom-inner">
+      <span>© <span id="year">2026</span> The Sports Mattress</span>
+      <span>Data from <a href="https://github.com/nflverse/nflverse-data" target="_blank" rel="noopener">nflverse</a> · Weather by <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a></span>
+      <span>Not affiliated with the NFL or any team.</span>
+      <a href="#page" class="to-top" data-top>Back to top ↑</a>
+    </div>
   </div>
 </footer>
 

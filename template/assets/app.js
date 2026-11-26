@@ -6,7 +6,12 @@ const POS = ["QB", "RB", "WR", "TE"];
 const POS_NAME = { QB: "quarterbacks", RB: "running backs", WR: "wide receivers", TE: "tight ends" };
 const RECENT = 3;
 const PLAYOFF_WEEKS = new Set([15, 16, 17]);
-const PAGES = ["home", "matchups", "start-sit", "my-team", "trade", "players", "schedule", "teams"];
+const PAGES = ["home", "matchups", "start-sit", "my-team", "trade", "players", "schedule", "teams", "about", "how-it-works", "privacy", "terms"];
+const PAGE_TITLES = {
+  home: "Fantasy Football Matchups, Start/Sit and Trade Analyzer", "start-sit": "Start / Sit", "my-team": "My Team",
+  trade: "Trade Analyzer", players: "Player Usage", schedule: "Strength of Schedule", teams: "Team Tendencies",
+  about: "About", "how-it-works": "How It Works", privacy: "Privacy", terms: "Terms of Use",
+};
 
 let D = null;                         // data.json
 const byId = new Map();
@@ -148,12 +153,23 @@ function boot() {
   dl.innerHTML = D.players.map(p => `<option value="${esc(playerLabel(p))}"></option>`).join("");
   document.body.appendChild(dl);
 
-  $("#weekPill").textContent = `${D.season} · Week ${D.week}`;
-  $("#fmtSeg").innerHTML = Object.entries(D.formats).map(([k, v]) => `<button type="button" data-fmt="${k}">${v}</button>`).join("");
-  $("#fmtSeg").addEventListener("click", e => {
-    const b = e.target.closest("button[data-fmt]"); if (!b) return;
-    state.fmt = b.dataset.fmt; store.set("tsm-fmt", state.fmt); render();
+  const fmtButtons = Object.entries(D.formats).map(([k, v]) => `<button type="button" data-fmt="${k}">${v}</button>`).join("");
+  $("#fmtSeg").innerHTML = fmtButtons;
+  $("#navFmt").innerHTML = `<span>Scoring</span><div class="seg seg-sm" role="group" aria-label="Scoring format">${fmtButtons}</div>`;
+  document.addEventListener("click", e => {
+    const b = e.target.closest("button[data-fmt]");
+    if (b) { state.fmt = b.dataset.fmt; store.set("tsm-fmt", state.fmt); render(); return; }
+    // Skip link and back-to-top use #page, which isn't a page route: handle them here.
+    const skip = e.target.closest("[data-skip]");
+    if (skip) { e.preventDefault(); $("#page").focus(); return; }
+    const top = e.target.closest("[data-top]");
+    if (top) { e.preventDefault(); window.scrollTo({ top: 0, behavior: "smooth" }); $("#page").focus({ preventScroll: true }); return; }
+    if (e.target.closest("#nav a")) setMenu(false);
   });
+  $("#menuBtn").addEventListener("click", () => setMenu(!document.body.classList.contains("nav-open")));
+  document.addEventListener("keydown", e => { if (e.key === "Escape" && document.body.classList.contains("nav-open")) { setMenu(false); $("#menuBtn").focus(); } });
+  $("#year").textContent = new Date().getFullYear();
+  renderStatus();
 
   const saved = store.get("tsm-ss", null);
   if (saved) { ss.a = byId.get(saved.a) || null; ss.b = byId.get(saved.b) || null; }
@@ -189,13 +205,15 @@ function route(scroll) {
   const cur = document.querySelector("#nav a[aria-current]"), nav = $("#nav");
   if (cur && nav.scrollWidth > nav.clientWidth) nav.scrollLeft = cur.offsetLeft - (nav.clientWidth - cur.offsetWidth) / 2;
   render();
+  setMenu(false);
   if (scroll) { window.scrollTo(0, 0); $("#page").focus({ preventScroll: true }); }
 }
 
 function render() {
-  document.querySelectorAll("#fmtSeg button").forEach(b => b.setAttribute("aria-pressed", b.dataset.fmt === state.fmt));
+  document.querySelectorAll("button[data-fmt]").forEach(b => b.setAttribute("aria-pressed", b.dataset.fmt === state.fmt));
   const fn = { home: renderHome, matchups: renderMatchups, "start-sit": renderStartSit, "my-team": renderMyTeam,
-    players: renderPlayers, schedule: renderSchedule, teams: renderTeams, trade: renderTrade }[state.page];
+    players: renderPlayers, schedule: renderSchedule, teams: renderTeams, trade: renderTrade, about: renderAbout, "how-it-works": renderHow, privacy: renderPrivacy, terms: renderTerms }[state.page];
+  document.title = `${state.page === "matchups" ? `Week ${D.week} ${state.pos} Matchups` : PAGE_TITLES[state.page]} · The Sports Mattress`;
   const active = document.activeElement && document.activeElement.id;
   const caret = active && document.activeElement.selectionStart;
   fn();
@@ -211,12 +229,42 @@ function render() {
   if (pd.open && pd.dataset.player) fillPlayer(byId.get(pd.dataset.player));
 }
 
+function setMenu(open) {
+  document.body.classList.toggle("nav-open", open);
+  const b = $("#menuBtn");
+  b.setAttribute("aria-expanded", open); b.setAttribute("aria-label", open ? "Close menu" : "Open menu");
+}
+// Status bar: when the data was built and when the next scheduled rebuild runs (Wed 10am, Sun 5am ET).
+function etParts(d) {
+  const o = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short", hour: "numeric", hourCycle: "h23" })
+    .formatToParts(d).map(x => [x.type, x.value]));
+  return { wd: o.weekday, h: Number(o.hour) };
+}
+function nextUpdate(now = new Date()) {
+  const d = new Date(now); d.setMinutes(0, 0, 0);
+  for (let i = 1; i <= 24 * 8; i++) {
+    d.setTime(d.getTime() + 3600e3);
+    const { wd, h } = etParts(d);
+    if ((wd === "Wed" && h === 10) || (wd === "Sun" && h === 5)) return d;
+  }
+  return null;
+}
+function fmtET(d, opts) { return d.toLocaleString("en-US", { timeZone: "America/New_York", ...opts }); }
+function renderStatus() {
+  const u = new Date(D.updated), n = nextUpdate();
+  $("#statusWeek").textContent = `Week ${D.week} matchups are live`;
+  $("#statusMeta").textContent = `Updated ${fmtET(u, { weekday: "short", hour: "numeric", minute: "2-digit" })} ET` +
+    (n ? ` · Next update ${fmtET(n, { weekday: "short", hour: "numeric", minute: "2-digit" })} ET` : "");
+}
+function methodLink(topic) {
+  return `<p class="method-link">How ${topic} work: <a href="#how-it-works">see How It Works</a>.</p>`;
+}
 function pageHead(eyebrow, title, lede) {
   return `<div class="page-head"><div class="eyebrow">${eyebrow}</div><h1>${title}</h1>${lede ? `<p class="lede">${lede}</p>` : ""}</div>`;
 }
 function updatedText() {
   const u = new Date(D.updated);
-  return `Stats through Week ${D.statsThrough}. Updated ${u.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}, ${u.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}.`;
+  return `Stats through Week ${D.statsThrough}. Updated ${u.toLocaleString("en-US", { timeZone: "America/New_York", weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} ET.`;
 }
 
 // ------------------------------------------------------------------ events
@@ -522,18 +570,13 @@ function renderMatchups() {
     </div>
     <div class="legend"><span>Tough matchup</span><span class="bar" aria-hidden="true"></span><span>Great matchup</span><span>Rank 1 = fewest ${esc(fmtLabel())} points allowed to ${POS_NAME[pos]}, 32 = most</span></div>
     <div class="chart-key">
-      <p><b>Team Tot</b> is the team's projected points for this game, worked out from the betting line (the over/under and the spread). More projected points means more scoring chances for its ${POS_NAME[pos]}.</p>
-      <p><b>Weather</b> is the forecast at kickoff: temperature, wind and chance of rain or snow. Yellow means rough conditions (15+ mph wind, 50%+ precipitation or 25°F and below), which tend to hurt passing and kicking.</p>
+      <p><b>Team Tot</b> = the team's projected points from the betting line. <b>Weather</b> = kickoff forecast; yellow means rough conditions (15+ mph wind, 50%+ rain or snow, or 25°F and below).</p>
     </div>
     <div class="table-box"><table>
       <thead><tr>${cols.map(c => `<th class="${c.cls || ""}" scope="col"${c.key === "implied" ? ' title="Projected points for this team, from the betting line"' : c.key === "wx" ? ' title="Kickoff forecast"' : ""}>${sortBtn(c.key, c.label, state.sort)}</th>`).join("")}</tr></thead>
       <tbody>${body}</tbody></table></div>
     ${downloads}
-    <div class="notes">
-      <p>Every stat is what the <strong>opponent's defense</strong> has allowed per game to ${POS_NAME[pos]} this season, through Week ${D.statsThrough}.</p>
-      <p>FPPG is ${esc(fmtLabel())} points allowed per game. PA Wk ${D.prevWeek} is what that defense gave up to ${POS_NAME[pos]} last week, and who scored the most.</p>
-      <p>${pos === "QB" ? "Passing numbers count every pass thrown against the defense." : pos === "WR" ? "Up to three receivers from the current depth chart are listed per team." : "A second player is listed when he scores at least 60% as much as the starter over the last three games."} Click a name for usage and game logs, or a column header to sort.</p>
-    </div>`;
+    ${methodLink("matchup charts")}`;
 }
 
 // ------------------------------------------------------------------ START / SIT
@@ -549,11 +592,7 @@ function renderStartSit() {
     <p class="example" id="ssExample" ${ss.example ? "" : "hidden"}>Example comparison. Type any two players above to compare your own.</p>
     <div id="verdict" class="verdict" aria-live="polite"></div>
     <div class="table-box"><table class="cmp" id="cmp"><tbody></tbody></table></div>
-    <div class="notes">
-      <p><strong>How the projection works:</strong> each player's points per game (60% season average, 40% last ${RECENT} games), adjusted for how many points this week's opponent allows to his position compared with the league average.</p>
-      <p>The matchup adjustment is halved and capped at ±25%, because a defense's numbers over ten or so games are noisy. Under 1 point apart is a toss-up. Outlined cells show who has the edge on that line.</p>
-      <p>Injury status is from the official Week ${D.week} report. Weather, game script and late news aren't included.</p>
-    </div>`;
+    ${methodLink("Start / Sit projections")}`;
   renderSSResult();
 }
 
@@ -764,10 +803,7 @@ function renderMyTeam() {
         <div class="panel lineup">${bench.length ? bench.map(x => rosterRow("BN", x, !r.example)).join("") : `<p class="empty">Everyone on your roster is in the lineup.</p>`}</div>
       </div>
     </section>
-    <div class="notes">
-      <p>Each spot gets the highest projected player who can fill it. Fixed positions are filled first, then flex spots from who's left. Players who are out or on bye are skipped when you have someone else to play.</p>
-      <p>Projections use the same method as Start / Sit. Click a player for snap share, target share and his game log, or compare two of them in <a href="#start-sit">Start / Sit</a>.</p>
-    </div>`;
+    ${methodLink("lineup picks")}`;
 }
 
 // ------------------------------------------------------------------ PLAYERS
@@ -840,10 +876,7 @@ function renderPlayers() {
       <tbody>${body || `<tr><td colspan="${cols.length + 2}" class="empty">No players match those filters.</td></tr>`}</tbody>
     </table></div>
     <div class="more">${list.length ? `Showing ${shown.length} of ${list.length} players` : ""}${list.length > shown.length ? ` <button type="button" class="btn small" data-action="plmore">Show ${Math.min(50, list.length - shown.length)} more</button><button type="button" class="btn small" data-action="plall">Show all</button>` : ""}</div>
-    <div class="notes">
-      <p>Season averages over games played. Shares are the player's part of his team's total in the games he played.</p>
-      <p><strong>Snap %</strong> share of offensive snaps. <strong>Tgt %</strong> share of team targets. <strong>Air %</strong> share of team air yards (how far downfield passes travel). <strong>WOPR</strong> weighted opportunity rating, 1.5 × target share + 0.7 × air yards share; above 0.5 is elite for a receiver. <strong>Rush %</strong> share of team carries. <strong>RZ opp</strong> targets plus carries inside the opponent's 20.</p>
-    </div>`;
+    ${methodLink("usage stats")}`;
 }
 
 // ------------------------------------------------------------------ SCHEDULE (strength of schedule)
@@ -876,7 +909,7 @@ function renderSchedule() {
         ${avgCell(r.next4)}${avgCell(r.ros)}${hasPO ? avgCell(r.po) : ""}
         ${weeks.map(w => { const gm = r.byWeek.get(w); return gm ? `<td class="wk scale" style="background:${rankColor(gm.rank)}" title="${esc(D.teams[gm.opp].name)}: ${gm.rank} vs ${pos}"><span class="wk-cell">${teamLogo(gm.opp, "xs")}<span>${gm.away ? "@" : ""}${esc(gm.opp)}</span></span></td>` : `<td class="wk bye">BYE</td>`; }).join("")}</tr>`).join("")}</tbody>
     </table></div>
-    <div class="notes"><p>Ranks use defensive results so far this season (through Week ${D.statsThrough}), so they shift as the season goes on. Weeks 15–17 are the usual fantasy playoffs, and are underlined.</p></div>`;
+    ${methodLink("schedule ranks")}`;
 }
 
 // ------------------------------------------------------------------ TEAMS
@@ -912,11 +945,7 @@ function renderTeams() {
         <td>${r.opp ? `<span class="opp-cell">${teamLogo(r.opp, "sm")}<span>${r.away ? "@" : "vs "}${esc(r.opp)}<span class="kick">${esc(kickLabel(r.kick))}</span></span></span>` : `<span class="badge">BYE</span>`}</td>
         ${cols.map(c => cell(c, r[c.key])).join("")}</tr>`).join("")}</tbody>
     </table></div>
-    <div class="notes">
-      <p><strong>Proj pts</strong> the team's projected points, worked out from the betting spread and over/under. <strong>Spread</strong> negative means favored.</p>
-      <p><strong>Pass rate</strong> share of plays that are dropbacks. <strong>Neutral pass</strong> the same on 1st and 2nd down while the game is close, which shows a coach's real preference. <strong>PROE</strong> pass rate over expected for the situation. <strong>RZ plays</strong> snaps inside the opponent's 20 per game.</p>
-      <p>Green means more fantasy-friendly: more points, more plays, more passing. For points allowed, green means the defense gives up a lot, which is good for the other team.</p>
-    </div>`;
+    ${methodLink("team stats")}`;
 }
 
 // ------------------------------------------------------------------ PLAYER DRAWER
@@ -1332,10 +1361,77 @@ function renderTrade() {
     ${verdictHtml}
     ${all.length ? `<section class="tcards">${all.map(card).join("")}</section>` : ""}
     ${h2h}
-    <div class="notes">
-      <p><strong>Rest-of-season (ROS) value</strong> is each player's scoring rate (60% season average, 40% last 3 games) for every remaining game through Week ${FANTASY_END}, with each game adjusted for that opponent. Games he's ruled out of are removed, and a player who has missed 2 or more straight games loses another week.</p>
-      <p><strong>Trade value</strong> is projected points above what a waiver-level player at his position would score (about QB${REPLACEMENT_RANK.QB}, RB${REPLACEMENT_RANK.RB}, WR${REPLACEMENT_RANK.WR} and TE${REPLACEMENT_RANK.TE} in a 12-team league), plus a little for depth. That's why a quarterback is usually worth less in a trade than a running back who scores the same. Each side's best player counts in full and extra players at ${DEPTH_WEIGHTS.slice(1, 4).map(w => Math.round(w * 100) + "%").join(", ")} and so on, since only so many can start. Within 5% is a fair trade.</p>
-      <p><strong>Trade timing</strong> looks at recent form, touchdown dependence, changes in target or rush share, and the next four opponents. "Good time to sell" means his value is likely as high as it'll get. "Selling low" means it's likely to recover.</p>
-    </div>`;
+    ${methodLink("trade values")}`;
+}
+// ================================================================== CONTENT PAGES
+function articlePage(eyebrow, title, lede, sections, toc) {
+  return `<article class="article">
+    ${pageHead(eyebrow, title, lede)}
+    ${toc ? `<nav class="toc panel" aria-label="On this page"><span class="muted">On this page</span>${sections.map((x, i) => `<button type="button" class="chip" data-action="goto" data-target="sec-${i}">${x[0]}</button>`).join("")}</nav>` : ""}
+    ${sections.map((x, i) => `<section class="article-sec" id="sec-${i}"><h2>${x[0]}</h2>${x[1]}</section>`).join("")}
+  </article>`;
+}
+ACTIONS.goto = el => { const t = document.getElementById(el.dataset.target); if (t) t.scrollIntoView({ behavior: "smooth", block: "start" }); };
+
+function renderAbout() {
+  $("#page").innerHTML = articlePage("About", "Matchups you can sleep on",
+    "The Sports Mattress started as a set of hand-made weekly matchup spreadsheets. Now the charts build themselves, with a few more tools around them.", [
+    ["What it is", `<p>Free fantasy football research, built around one idea: who a player faces matters. Every week we rank all 32 defenses by what they give up to quarterbacks, running backs, receivers and tight ends, color them from tough to great, and put them next to the players who face them.</p>
+      <p>Around the charts are the tools fantasy managers use most: <a href="#start-sit">Start / Sit</a> comparisons, a <a href="#my-team">lineup builder</a>, a <a href="#trade">Trade Analyzer</a>, <a href="#players">player usage</a> (snap share, target share, red-zone chances), <a href="#schedule">strength of schedule</a> and <a href="#teams">team tendencies</a>.</p>`],
+    ["When it updates", `<p>Everything rebuilds automatically every <strong>Wednesday at 10am</strong> and <strong>Sunday at 5am</strong> Eastern. Wednesday brings the new week's matchups with every game from the week before; Sunday morning picks up the final injury reports, depth chart changes and the latest kickoff forecast.</p>`],
+    ["Where the numbers come from", `<p>Stats, schedules, betting lines, depth charts, injury reports, snap counts and play-by-play come from <a href="https://github.com/nflverse/nflverse-data" target="_blank" rel="noopener">nflverse</a>, an open-source NFL data project. Kickoff weather comes from <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a>. See <a href="#how-it-works">How It Works</a> for how each number is calculated.</p>`],
+    ["Not affiliated", `<p>The Sports Mattress is an independent fan project. It isn't affiliated with or endorsed by the NFL, its teams or any fantasy platform.</p>`],
+  ]);
+}
+
+function renderHow() {
+  const f = fmtLabel();
+  $("#page").innerHTML = articlePage("Methodology", "How It Works",
+    "What every number on the site means and how it's calculated.", [
+    ["Scoring", `<p>4 points per passing TD, 1 point per 25 passing yards, 1 per 10 rushing or receiving yards, 6 per rushing or receiving TD, 2 per two-point conversion, −2 per interception or fumble lost. PPR adds 1 point per catch, Half PPR 0.5. Switch formats with the PPR / Half PPR / Standard control at the top of any page.</p>`],
+    ["Matchup charts", `<ul>
+      <li><strong>Rank</strong>: each defense's fantasy points allowed per game to the position, 1 (fewest, tough) to 32 (most, great). Charts are sorted with the best matchups first.</li>
+      <li><strong>FPPG</strong>: fantasy points allowed per game to the position. <strong>PA Wk</strong>: what the defense gave up last week, and who scored the most.</li>
+      <li>The other columns are per-game stats the defense allows to the position. QB passing numbers count every pass thrown against the defense.</li>
+      <li><strong>Team Tot</strong>: the team's projected points, from the betting spread and over/under. <strong>Weather</strong>: the kickoff-hour forecast for the stadium; domes and closed roofs show as indoors.</li>
+      <li>Players come from the latest depth chart. A second RB or TE is listed when he's scoring at least 60% as much as the starter over the last 3 games.</li></ul>`],
+    ["Projections and Start / Sit", `<p>A player's projection is his scoring rate (60% season average, 40% last 3 games) multiplied by a matchup adjustment: how many points this week's opponent allows to his position compared with the league average. The adjustment is halved and capped at ±25%, because ten or so games of defensive results are noisy.</p>
+      <p>Start / Sit compares two projections. Under 1 point apart is a toss-up. Players ruled out or on bye can't be started, and a doubtful player loses to a healthy one. <strong>My Team</strong> fills each lineup spot with the highest-projected eligible player: fixed positions first, then flex.</p>`],
+    ["Trade Analyzer", `<ul>
+      <li><strong>Rest-of-season value</strong>: the scoring rate above for every remaining game through Week ${FANTASY_END}, each adjusted for that opponent (effect halved, capped at ±20%). Games he's ruled out of are removed, and a player who has missed 2+ straight games loses another week.</li>
+      <li><strong>Trade value</strong>: projected points above a waiver-level replacement at his position (about QB${REPLACEMENT_RANK.QB}, RB${REPLACEMENT_RANK.RB}, WR${REPLACEMENT_RANK.WR}, TE${REPLACEMENT_RANK.TE} in a 12-team, 1-QB league), plus a little for depth. Each side's best player counts in full; extra players count ${DEPTH_WEIGHTS.slice(1, 4).map(w => Math.round(w * 100) + "%").join(", ")} and so on. Within 5% is a fair trade.</li>
+      <li><strong>Trade timing</strong> weighs recent form, touchdown dependence, changes in target or rush share and the next four opponents. "Good time to sell" means his value is probably near its peak; "selling low" means it's likely to recover.</li>
+      <li><strong>Playoffs</strong> are Weeks 15–17.</li></ul>`],
+    ["Usage stats", `<ul>
+      <li><strong>Snap share</strong>: share of the team's offensive snaps.</li>
+      <li><strong>Target share</strong>: share of team targets in the games he played. <strong>Air yards share</strong>: share of the team's air yards (how far downfield passes travel).</li>
+      <li><strong>WOPR</strong>: 1.5 × target share + 0.7 × air yards share. Above 0.5 is elite for a receiver.</li>
+      <li><strong>Rush share</strong>: share of team carries. <strong>Red-zone chances</strong>: targets plus carries inside the opponent's 20. <strong>Goal-line carries</strong>: inside the 5.</li>
+      <li><strong>Hot / cold</strong>: last 3 games at least 20% and 3 points above (or below) his season average. <strong>Boom / bust</strong>: weeks above the 80th percentile, or below the 25th, of weekly scores by starter-level players at his position.</li></ul>`],
+    ["Strength of schedule", `<p>Each remaining opponent is colored by its rank in ${esc(f)} points allowed to the position (32 = softest). Next 4, rest of season and Weeks 15–17 are averages of those ranks. Ranks use this season's results, so they shift as the season goes on.</p>`],
+    ["Team tendencies", `<ul>
+      <li><strong>Pass rate</strong>: share of plays that are dropbacks. <strong>Neutral pass rate</strong>: the same on 1st and 2nd down while the game is close (win probability 20–80%, first three quarters).</li>
+      <li><strong>PROE</strong>: pass rate over expected for the situation. <strong>RZ plays</strong>: snaps inside the opponent's 20 per game.</li></ul>`],
+    ["Data and updates", `<p>Data from <a href="https://github.com/nflverse/nflverse-data" target="_blank" rel="noopener">nflverse</a> and <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a>, rebuilt every Wednesday at 10am and Sunday at 5am Eastern. Current data: ${D.season} season, stats through Week ${D.statsThrough}.</p>`],
+  ], true);
+}
+
+function renderPrivacy() {
+  $("#page").innerHTML = articlePage("Legal", "Privacy", "Short version: there are no accounts, and nothing you enter leaves your browser.", [
+    ["What we store", `<p>Your settings (scoring format), your My Team roster, your Start / Sit players and your trade are saved in your browser's local storage so they're there next time. They stay on your device and aren't sent to us. Clearing your browser data removes them.</p>`],
+    ["What we don't collect", `<p>No sign-up, no names or emails, no payment details, and no advertising or analytics trackers.</p>`],
+    ["Other services", `<p>To show the site, your browser loads fonts from Google Fonts, player photos from NFL.com and team logos from ESPN. Those services receive standard request information (like your IP address) under their own privacy policies. The site is hosted on GitHub Pages.</p>`],
+    ["Changes", `<p>If this changes (for example, if we add analytics), this page will be updated first.</p>`],
+  ]);
+}
+
+function renderTerms() {
+  $("#page").innerHTML = articlePage("Legal", "Terms of Use", "By using The Sports Mattress you agree to these terms.", [
+    ["For entertainment and research", `<p>Projections, rankings, grades and trade verdicts are estimates from public data and simple models. They aren't guarantees, and they aren't betting or financial advice. Make your own decisions.</p>`],
+    ["Accuracy", `<p>Data comes from third-party sources and is updated on a schedule, so it can be incomplete, delayed or wrong, especially around late injury news. The site is provided "as is", without warranties of any kind.</p>`],
+    ["Not affiliated", `<p>The Sports Mattress isn't affiliated with or endorsed by the NFL, its teams, ESPN or any fantasy platform. Team names, logos and player images belong to their owners and are shown for identification only.</p>`],
+    ["Data sources", `<p>Stats from <a href="https://github.com/nflverse/nflverse-data" target="_blank" rel="noopener">nflverse</a>. Weather from <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a>.</p>`],
+    ["Changes", `<p>These terms may change; the version on this page is the current one.</p>`],
+  ]);
 }
 })();
