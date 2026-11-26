@@ -281,6 +281,12 @@ td.wx-rough .kick { color: #6b5a1e; }
 .list-row .right .up { color: var(--win); font-weight: 700; }
 .list-row .right .down { color: var(--bad); font-weight: 700; }
 .hc-head { display: flex; align-items: center; gap: 8px; }
+.inj-panel { padding-bottom: 6px; }
+.inj-note { margin: 0; padding: 10px 14px; font-size: 13px; color: var(--muted); background: var(--surface-2); border-bottom: 1px solid var(--line); border-radius: 12px 12px 0 0; }
+.inj-group h3 { font-size: 13px; letter-spacing: .1em; color: var(--muted); padding: 12px 14px 2px; margin: 0; }
+.inj-empty { margin: 0; padding: 6px 14px 10px; font-size: 13px; color: var(--muted); }
+.inj-ir { margin: 0; padding: 6px 14px 12px; font-size: 14px; line-height: 1.7; }
+.inj-ir small { color: var(--muted); font-size: 12px; }
 .hc-dot { width: 10px; height: 10px; border-radius: 50%; }
 
 /* ------------------------------------------------------------------ start/sit + my team */

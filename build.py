@@ -346,18 +346,33 @@ def load_weather(games: list[dict]) -> dict[str, dict]:
     return out
 
 
+LAST_INJURY_INFO = {"prev": {}, "teams": set()}
+
+
 def load_injuries(season: int, week: int) -> dict[str, dict]:
-    """This week's official injury report: {gsis_id: {"status", "injury"}}. Empty if unavailable."""
+    """This week's official injury report: {gsis_id: {"status", "injury"}}. Empty if unavailable.
+
+    Also records (in LAST_INJURY_INFO) which teams have filed this week's report and last week's
+    statuses, so players who sat out last week can show why while this week's report is pending.
+    """
     try:
         path = fetch(URL_INJURIES.format(season=season), f"injuries_{season}.csv")
     except Exception as e:  # the injury file is a nice-to-have
         print(f"  injuries unavailable: {e}", file=sys.stderr)
         return {}
-    out = {}
+    out, prev, teams = {}, {}, set()
     with open(path, newline="") as f:
         for r in csv.DictReader(f):
-            if r["week"] == str(week) and r["game_type"] == "REG" and r["report_status"] not in ("", "NA"):
-                out[r["gsis_id"]] = {"status": r["report_status"], "injury": r["report_primary_injury"]}
+            if r["game_type"] != "REG":
+                continue
+            if r["week"] == str(week):
+                teams.add(r["team"])
+                if r["report_status"] not in ("", "NA"):
+                    out[r["gsis_id"]] = {"status": r["report_status"], "injury": r["report_primary_injury"]}
+            elif r["week"] == str(week - 1) and r["report_status"] not in ("", "NA"):
+                prev[r["gsis_id"]] = {"status": r["report_status"], "injury": r["report_primary_injury"], "week": week - 1}
+    LAST_INJURY_INFO.update(prev=prev, teams=teams)
+    print(f"  injury report: {len(teams)} teams have filed for week {week}", file=sys.stderr)
     return out
 
 
@@ -552,6 +567,7 @@ def build(season: int, week: int | None) -> dict:
         "players": players_out,
         "logKeys": LOG_KEYS,
         "teams": teams_out,
+        "injuryTeams": sorted(LAST_INJURY_INFO["teams"]),
     }
 
 
@@ -712,6 +728,8 @@ def build_players(plog, depth, injuries, opponent, target, snaps, pbp_player, te
             continue
         if pid in injuries:
             row["inj"] = injuries[pid]
+        elif row["missed"] >= 1 and pid in LAST_INJURY_INFO["prev"]:
+            row["injPrev"] = LAST_INJURY_INFO["prev"][pid]      # why he sat out last week
         if status == "RES":     # injured reserve, PUP or another reserve list: out
             row["inj"] = {"status": "IR", "injury": (injuries.get(pid) or {}).get("injury", "")}
         out.append(row)

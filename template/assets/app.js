@@ -140,7 +140,7 @@ function project(p, f = state.fmt) {
 function injBadge(p) {
   if (inactive(p)) return `<span class="badge out" title="Hasn't played in his team's last ${p.missed} games">Inactive</span>`;
   if (p.bye) return `<span class="badge out">Bye</span>`;
-  if (!p.inj) return p.missed >= 1 ? `<span class="badge q" title="Didn't play in his team's last game">Missed last game</span>` : "";
+  if (!p.inj) return p.missed >= 1 ? `<span class="badge q" title="Didn't play in his team's last game${p.injPrev ? ` (Week ${p.injPrev.week}: ${esc(p.injPrev.status)}${p.injPrev.injury ? `, ${esc(p.injPrev.injury)}` : ""})` : ""}">Missed last game</span>` : "";
   return `<span class="badge ${injOut(p) ? "out" : "q"}" title="${esc(p.inj.injury || "")}">${esc(p.inj.status)}</span>`;
 }
 function oppText(p) { return p.bye ? "BYE" : `${p.away ? "@" : "vs "}${p.opp}`; }
@@ -392,12 +392,24 @@ function renderHome() {
   // Target share risers.
   const tgtUp = shareRisers("tgtShare", ["RB", "WR", "TE"], 0.04).map(x => playerRow(x.p,
     `<span class="up">${pct(x.s)} → ${pct(x.r)}</span><small>target share, last 3 · ${f1(x.p.l3use.tgt ?? x.p.use.tgt)} tgt/g</small>`));
-  // Injury watch.
-  // Chosen by PPR average so the list stays the same whichever scoring format is selected.
-  const inj = D.players.filter(p => p.inj && p.ppg.ppr >= 9).sort((a, b) => b.ppg.ppr - a.ppg.ppr).slice(0, 8)
-    .map(p => `<div class="list-row">
-      <div class="pcell">${avatar(p)}<span class="meta">${plink(p)}<small>${p.pos} · ${esc(p.team)} · ${f1(pts(p.ppg, f))} pts/g</small></span></div>
-      <div class="right">${injBadge(p)}<small>${esc(p.inj.injury || "")}</small></div></div>`);
+  // Injury report: this week's statuses, players who sat out last week, and IR.
+  const relevant = p => p.ppg.ppr >= 7;
+  const byPpg = (a, b) => b.ppg.ppr - a.ppg.ppr;
+  const injRow = (p, right) => `<div class="list-row">
+      <div class="pcell">${avatar(p)}<span class="meta">${plink(p)}<small class="pline">${p.pos} · ${teamLogo(p.team, "sm")}${esc(p.team)} · ${f1(pts(p.ppg, f))} pts/g</small></span></div>
+      <div class="right">${right}</div></div>`;
+  const current = D.players.filter(p => p.inj && p.inj.status !== "IR" && relevant(p)).sort(byPpg).slice(0, 8)
+    .map(p => injRow(p, `${injBadge(p)}<small>${esc(p.inj.injury || "")}</small>`));
+  const sat = D.players.filter(p => !p.inj && p.missed >= 1 && !inactive(p) && relevant(p)).sort(byPpg).slice(0, 6)
+    .map(p => injRow(p, `<span class="badge q">Missed last game</span><small>${p.injPrev ? `Wk ${p.injPrev.week}: ${esc(p.injPrev.status)}${p.injPrev.injury ? ` · ${esc(p.injPrev.injury)}` : ""}` : "No reason listed"}</small>`));
+  const ir = D.players.filter(p => (p.inj && p.inj.status === "IR") || inactive(p)).filter(p => p.ppg.ppr >= 9).sort(byPpg);
+  const filed = (D.injuryTeams || []).length;
+  const injGroup = (title, rows, empty) => `<div class="inj-group"><h3>${title}</h3>${rows.length ? rows.join("") : `<p class="inj-empty">${empty}</p>`}</div>`;
+  const injHtml = `${filed < 32 ? `<p class="inj-note">Week ${D.week} reports are in for <b>${filed} of 32</b> teams. The rest post by Friday, and the site picks them up Sunday at 5am ET.</p>` : ""}
+    ${injGroup(`Week ${D.week} report`, current, filed ? "No fantasy starters listed yet." : "No team has filed yet.")}
+    ${injGroup("Missed last game", sat, "Every fantasy starter played last week.")}
+    ${ir.length ? `<div class="inj-group"><h3>On injured reserve</h3><p class="inj-ir">${ir.map(p => `${plink(p)} <small>${p.pos} · ${esc(p.team)}</small>`).join(", ")}</p></div>` : ""}`;
+
   // Hot and cold: last 3 games vs season average.
   const form = D.players.filter(p => p.g >= 5 && !p.bye && playedRecently(p)).map(p => {
     const s = pts(p.ppg, f), r = pts(p.l3, f);
@@ -479,7 +491,7 @@ function renderHome() {
       <div class="section"><div class="section-head"><h2>Usage risers</h2><span class="muted" style="font-size:13px">Snap share, last 3 vs season</span></div>
         ${listPanel(snapUp, "No big snap-share jumps this week.")}</div>
       <div class="section"><div class="section-head"><h2>Injury report</h2><span class="muted" style="font-size:13px">Week ${D.week}, fantasy starters</span></div>
-        ${listPanel(inj, "No fantasy starters on the injury report yet.")}</div>
+        <div class="panel list inj-panel">${injHtml}</div></div>
     </section>
 
     <section class="grid-3" style="align-items:start">
