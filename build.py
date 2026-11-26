@@ -687,9 +687,6 @@ def build_players(plog, depth, injuries, opponent, target, snaps, pbp_player, te
 def render_html(downloads: bool, build_id: str) -> str:
     html = (ROOT / "template" / "index.html").read_text()
     html = html.replace("__BUILD__", build_id)
-    pro = json.loads((ROOT / "pro.json").read_text()) if (ROOT / "pro.json").exists() else {}
-    pro = {k: v for k, v in pro.items() if not k.startswith("_")}
-    html = html.replace("/*__PRO__*/null", json.dumps(pro).replace("</", "<\\/"))
     return html.replace("/*__DOWNLOADS__*/true", "true" if downloads else "false")
 
 
