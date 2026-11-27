@@ -119,7 +119,7 @@ COLUMNS = {
 STALE_SOURCES: list[str] = []      # files we fell back to an older copy of (reported in the data)
 
 
-def fetch(url: str, name: str, max_age_hours: float = 6, attempts: int = 4) -> Path:
+def fetch(url: str, name: str, max_age_hours: float = 6, attempts: int = 4, user_agent: str = "fantasy-matchups-builder") -> Path:
     """Download url into the cache (reused if fresh).
 
     Retries with growing waits, because nflverse briefly returns errors while it republishes files.
@@ -130,7 +130,7 @@ def fetch(url: str, name: str, max_age_hours: float = 6, attempts: int = 4) -> P
     path = CACHE / name
     if path.exists() and (dt.datetime.now().timestamp() - path.stat().st_mtime) < max_age_hours * 3600:
         return path
-    req = urllib.request.Request(url, headers={"User-Agent": "fantasy-matchups-builder"})
+    req = urllib.request.Request(url, headers={"User-Agent": user_agent, "Accept": "application/rss+xml, application/xml, text/xml, */*"})
     tmp = path.with_suffix(".part")
     last_err = None
     for i in range(attempts):
@@ -382,6 +382,100 @@ def load_weather(games: list[dict]) -> dict[str, dict]:
 
 
 LAST_INJURY_INFO = {"prev": {}, "teams": set()}
+
+
+# Public RSS feeds. We show only headline, source, time and a short summary, and link to the original article.
+NEWS_FEEDS = [
+    ("ESPN", "https://www.espn.com/espn/rss/nfl/news"),
+    ("CBS Sports", "https://www.cbssports.com/rss/headlines/nfl/"),
+    ("Yahoo Sports", "https://sports.yahoo.com/nfl/rss.xml"),
+    ("Pro Football Rumors", "https://www.profootballrumors.com/feed"),
+    ("RotoBaller", "https://www.rotoballer.com/category/nfl/feed"),
+]
+NEWS_MAX_AGE_HOURS = 96
+# Identify honestly as a feed reader, with a link back to the site (some publishers refuse anonymous scripts).
+FEED_USER_AGENT = "Mozilla/5.0 (compatible; SportsMattressNews/1.0; +https://sportsmattress.io/news/)"
+
+
+def _strip_html(text: str) -> str:
+    import html as _h
+    import re as _re
+    text = _re.sub(r"(?is)<(script|style).*?</\1>", " ", text or "")
+    text = _re.sub(r"<[^>]+>", " ", text)
+    return _re.sub(r"\s+", " ", _h.unescape(text)).strip()
+
+
+def load_news(players: list[dict]) -> list[dict]:
+    """Recent NFL headlines from public RSS feeds, tagged with the players they mention."""
+    import email.utils
+    import re as _re
+    import xml.etree.ElementTree as ET
+    now = dt.datetime.now(dt.timezone.utc)
+    items, seen = [], set()
+    for source, url in NEWS_FEEDS:
+        try:
+            path = fetch(url, "news_" + _re.sub(r"[^a-z0-9]+", "_", source.lower()) + ".xml", max_age_hours=0.5, attempts=2,
+                         user_agent=FEED_USER_AGENT)
+            if path.stat().st_size < 200:
+                raise ValueError("empty response")
+            root = ET.parse(path).getroot()
+        except Exception as e:
+            print(f"  news feed unavailable ({source}): {e}", file=sys.stderr)
+            continue
+        for it in root.iter("item"):
+            title = _strip_html(it.findtext("title"))
+            link = (it.findtext("link") or "").strip()
+            if not title or not link.startswith("https://"):
+                continue
+            try:
+                when = email.utils.parsedate_to_datetime(it.findtext("pubDate") or "")
+                when = when if when.tzinfo else when.replace(tzinfo=dt.timezone.utc)
+            except Exception:
+                continue
+            if (now - when).total_seconds() > NEWS_MAX_AGE_HOURS * 3600:
+                continue
+            key = _re.sub(r"[^a-z0-9]", "", title.lower())[:80]
+            if key in seen:
+                continue
+            seen.add(key)
+            summary = _strip_html(it.findtext("description"))
+            if len(summary) > 220:
+                summary = summary[:217].rsplit(" ", 1)[0] + "…"
+            items.append({"title": title[:200], "link": link, "source": source,
+                          "time": when.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "summary": summary})
+    # Tag fantasy-relevant players mentioned by full name.
+    names = [(p["id"], p["name"]) for p in players if p["ppg"]["ppr"] >= 5 and len(p["name"]) > 6]
+    for it in items:
+        text = f'{it["title"]} {it["summary"]}'
+        ids = [pid for pid, name in names if name in text]
+        if ids:
+            it["players"] = ids[:4]
+    items.sort(key=lambda x: x["time"], reverse=True)
+    print(f"  news: {len(items)} headlines from {len({i['source'] for i in items})} sources", file=sys.stderr)
+    return items[:90]
+
+
+def load_posts() -> list[dict]:
+    """Published blog posts from Supabase (public read). Empty if unavailable."""
+    url = (f"{SUPABASE_URL}/rest/v1/posts?select=slug,title,excerpt,body_md,cover_url,tags,author_name,published_at,updated_at"
+           "&status=eq.published&order=published_at.desc&limit=500")
+    try:
+        req = urllib.request.Request(url, headers={"apikey": SUPABASE_ANON_KEY, "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
+                                                   "User-Agent": "fantasy-matchups-builder"})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            posts = json.load(resp)
+        print(f"  blog: {len(posts)} published posts", file=sys.stderr)
+        return posts
+    except Exception as e:
+        print(f"  blog posts unavailable: {e}", file=sys.stderr)
+        return []
+
+
+def render_markdown(md_text: str) -> str:
+    """Article HTML for the pre-built pages. Raw HTML in posts is escaped (posts are Markdown only)."""
+    import markdown as _md
+    safe = (md_text or "").replace("&", "&amp;").replace("<", "&lt;")
+    return _md.markdown(safe, extensions=["extra", "sane_lists"], output_format="html")
 
 
 def load_injuries(season: int, week: int) -> dict[str, dict]:
@@ -866,6 +960,20 @@ def site_routes(data: dict) -> list[tuple]:
         ("privacy", "Privacy · The Sports Mattress", "What The Sports Mattress stores, why, and how to delete it.", "Privacy", "", True),
         ("terms", "Terms of Use · The Sports Mattress", "Terms of use for The Sports Mattress.", "Terms of Use", "", True),
     ]
+    routes += [
+        ("news", "Fantasy Football News · The Sports Mattress",
+         "The latest NFL and fantasy football headlines from around the web, updated throughout the day, with the players they mention.",
+         "Fantasy football news", "The latest headlines from around the web.", True),
+        ("blog", "Fantasy Football Articles · The Sports Mattress",
+         "Fantasy football analysis, rankings and advice from The Sports Mattress.", "The Sports Mattress blog",
+         "Articles, rankings and advice from The Sports Mattress.", True),
+    ]
+    for post in data.get("posts", []):
+        routes.append((f'blog/{post["slug"]}', f'{post["title"]} · The Sports Mattress', post.get("excerpt") or post["title"],
+                       post["title"], post.get("excerpt") or "", True,
+                       {"article_html": render_markdown(post.get("body_md", "")), "image": post.get("cover_url"),
+                        "published": post.get("published_at"), "modified": post.get("updated_at"), "author": post.get("author_name")}))
+    routes.append(("write", "Write · The Sports Mattress", "Write and publish articles.", "Write", "", False))
     for slug, t in (("login", "Log in"), ("signup", "Create account"), ("forgot", "Reset password"), ("reset", "Set new password"), ("account", "Your account")):
         routes.append((slug, f"{t} · The Sports Mattress", "Your free The Sports Mattress account.", t, "", False))
     return routes
@@ -904,8 +1012,13 @@ def esc_html(text: str) -> str:
 def render_html(downloads: bool, build_id: str, clean: bool = False, base: str = "", route=None, routes=None) -> str:
     html = (ROOT / "template" / "index.html").read_text()
     route = route or ("home", "The Sports Mattress", "", "", "", True)
-    slug, title, desc, h1, intro, indexable = route
-    url = SITE_URL if slug == "home" else f"{SITE_URL}{slug}/"
+    slug, title, desc, h1, intro, indexable = route[:6]
+    extra = route[6] if len(route) > 6 else {}
+    url = SITE_URL if slug in ("home", "notfound") else f"{SITE_URL}{slug}/"
+    image = extra.get("image") or f"{SITE_URL}assets/og.png"
+    html = html.replace('content="__SITE_URL__assets/og.png"', f'content="{esc_html(image)}"')
+    if extra.get("article_html") is not None:
+        html = html.replace('<meta property="og:type" content="website">', '<meta property="og:type" content="article">')
     html = html.replace("__TITLE__", esc_html(title)).replace("__DESC__", esc_html(desc)).replace("__CANONICAL__", url)
     html = html.replace("<!--__ROBOTS__-->", "" if indexable else '<meta name="robots" content="noindex, follow">')
     head_extra = ""
@@ -919,6 +1032,18 @@ def render_html(downloads: bool, build_id: str, clean: bool = False, base: str =
              "operatingSystem": "Any", "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"},
              "description": "Fantasy football matchup charts, start/sit tool, trade analyzer and usage stats."}]}
         head_extra = '<script type="application/ld+json">' + json.dumps(ld, separators=(",", ":")).replace("</", "<\\/") + "</script>"
+    elif extra.get("article_html") is not None:
+        ld = {"@context": "https://schema.org", "@graph": [
+            {"@type": "BlogPosting", "headline": h1[:110], "description": desc, "mainEntityOfPage": url,
+             "image": [image], "datePublished": extra.get("published"), "dateModified": extra.get("modified") or extra.get("published"),
+             "author": {"@type": "Person", "name": extra.get("author") or "The Sports Mattress"},
+             "publisher": {"@type": "Organization", "name": "The Sports Mattress",
+                           "logo": {"@type": "ImageObject", "url": SITE_URL + "assets/icon-512.png"}}},
+            {"@type": "BreadcrumbList", "itemListElement": [
+                {"@type": "ListItem", "position": 1, "name": "Home", "item": SITE_URL},
+                {"@type": "ListItem", "position": 2, "name": "Blog", "item": SITE_URL + "blog/"},
+                {"@type": "ListItem", "position": 3, "name": h1, "item": url}]}]}
+        head_extra = '<script type="application/ld+json">' + json.dumps(ld, separators=(",", ":")).replace("</", "<\\/") + "</script>"
     elif indexable:
         crumbs = {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [
             {"@type": "ListItem", "position": 1, "name": "Home", "item": SITE_URL},
@@ -927,15 +1052,16 @@ def render_html(downloads: bool, build_id: str, clean: bool = False, base: str =
     html = html.replace("<!--__HEAD_EXTRA__-->", head_extra)
     # Crawlable fallback shown until the app renders (and to clients without JavaScript).
     links = "".join(f'<li><a href="{base or "/"}{"" if r[0] == "home" else r[0] + "/"}">{esc_html(r[3])}</a></li>'
-                    for r in (routes or []) if r[5] and r[0] not in ("privacy", "terms")) if clean else ""
-    fallback = (f'<div class="seo-fallback"><h1>{esc_html(h1)}</h1>' + (f"<p>{esc_html(intro)}</p>" if intro else "")
+                    for r in (routes or []) if r[5] and r[0] not in ("privacy", "terms") and "/" not in r[0]) if clean else ""
+    article = f'<article class="post-body">{extra["article_html"]}</article>' if extra.get("article_html") else ""
+    fallback = (f'<div class="seo-fallback"><h1>{esc_html(h1)}</h1>' + (f"<p>{esc_html(intro)}</p>" if intro else "") + article
                 + '<p class="loading">Loading this week\'s data…</p>' + (f'<ul class="seo-links">{links}</ul>' if links else "")
                 + "<noscript><p>The Sports Mattress needs JavaScript to show its charts and tools.</p></noscript></div>")
     html = html.replace("<!--__FALLBACK__-->", fallback)
     html = html.replace("__BUILD__", build_id).replace("__SITE_URL__", SITE_URL).replace("__BASE__", base)
     html = html.replace("/*__SUPABASE__*/null", json.dumps({"url": SUPABASE_URL, "key": SUPABASE_ANON_KEY, "site": SITE_URL}))
     html = html.replace("/*__CLEAN__*/false", "true" if clean else "false")
-    html = html.replace("/*__TITLES__*/null", json.dumps({r[0]: r[1] for r in (routes or [])}).replace("</", "<\\/"))
+    html = html.replace("/*__TITLES__*/null", json.dumps({r[0]: r[1] for r in (routes or []) if "/" not in r[0]}).replace("</", "<\\/"))
     html = html.replace("<!--__GTM_HEAD__-->", gtm_head() if clean else "").replace("<!--__GTM_BODY__-->", gtm_body() if clean else "")
     return html.replace("/*__DOWNLOADS__*/true", "true" if downloads else "false")
 
@@ -974,21 +1100,20 @@ def write_site(data: dict, preview: Path | None) -> None:
     (OUT / "robots.txt").write_text(f"User-agent: *\nAllow: /\nDisallow: /account/\n\nSitemap: {SITE_URL}sitemap.xml\n")
     prio = {"home": "1.0", "trade": "0.9", "qb": "0.9", "rb": "0.9", "wr": "0.9", "te": "0.9", "start-sit": "0.9", "my-team": "0.8",
             "players": "0.8", "schedule": "0.8", "teams": "0.7"}
-    urls = "".join(f"  <url><loc>{SITE_URL if r[0] == 'home' else SITE_URL + r[0] + '/'}</loc><lastmod>{today}</lastmod>"
-                   f"<changefreq>daily</changefreq><priority>{prio.get(r[0], '0.4')}</priority></url>\n" for r in routes if r[5])
+    prio.update({"news": "0.8", "blog": "0.8"})
+    def lastmod(r):
+        return ((r[6].get("modified") or r[6].get("published") or today)[:10]) if len(r) > 6 else today
+    urls = "".join(f"  <url><loc>{SITE_URL if r[0] == 'home' else SITE_URL + r[0] + '/'}</loc><lastmod>{lastmod(r)}</lastmod>"
+                   f"<changefreq>{'weekly' if r[0].startswith('blog/') else 'daily'}</changefreq>"
+                   f"<priority>{'0.7' if r[0].startswith('blog/') else prio.get(r[0], '0.4')}</priority></url>\n" for r in routes if r[5])
     (OUT / "sitemap.xml").write_text('<?xml version="1.0" encoding="UTF-8"?>\n'
                                      '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' + urls + "</urlset>\n")
     # Real 404 page (GitHub Pages serves it with a 404 status) with links back into the site.
-    (OUT / "404.html").write_text(
-        '<!doctype html>\n<html lang="en"><head><meta charset="utf-8">' + gtm_head() + '<meta name="viewport" content="width=device-width, initial-scale=1">'
-        '<title>Page not found · The Sports Mattress</title><meta name="robots" content="noindex">'
-        '<link rel="icon" href="/favicon.ico" sizes="32x32"><link rel="stylesheet" href="/assets/app.css">'
-        '<style>.nf{max-width:640px;margin:0 auto;padding:80px 20px;display:grid;gap:16px}.nf a.btn{width:fit-content}</style></head>'
-        '<body>' + gtm_body() + '<main class="nf"><a class="wordmark" href="/" style="text-decoration:none;font-size:34px">The Sports Mattress</a>'
-        '<h1>Page not found</h1><p class="lede">That page doesn\'t exist or has moved.</p>'
-        '<p><a class="btn primary" href="/">Go to this week\'s matchups</a></p>'
-        '<p class="muted">Or try the <a href="/trade/">Trade Analyzer</a>, <a href="/start-sit/">Start / Sit</a> or <a href="/qb/">matchup charts</a>.</p>'
-        "</main></body></html>\n")
+    # 404 page = the app shell (served with a 404 status). The app shows "Page not found" for unknown
+    # addresses, and new blog posts open right away even before their page has been built.
+    nf = ("notfound", "Page not found · The Sports Mattress", "That page doesn't exist or has moved.", "Page not found",
+          "That page doesn't exist or has moved.", False)
+    (OUT / "404.html").write_text('<!doctype html>\n<html lang="en">\n' + render_html(True, build_id, clean=True, base="/", route=nf, routes=routes) + "\n</html>\n")
     print(f"Wrote {OUT / 'index.html'} and {len(routes) - 1} more pages", file=sys.stderr)
     if preview:
         # Body-only copy without download links, for hosts that wrap pages themselves (uses #routes).
@@ -1074,6 +1199,8 @@ def main() -> None:
     ap.add_argument("--preview", type=Path, help="also write a body-only preview site into this folder")
     args = ap.parse_args()
     data = build(args.season or pick_season(), args.week)
+    data["news"] = load_news(data["players"])
+    data["posts"] = load_posts()
     write_site(data, args.preview)
 
 

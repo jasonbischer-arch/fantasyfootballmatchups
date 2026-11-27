@@ -6,6 +6,8 @@ on:
   schedule:
     - cron: "0 9 * * *"    # 5am EDT
     - cron: "0 10 * * *"   # 5am EST
+    # News headlines and new blog pages: every 3 hours.
+    - cron: "17 */3 * * *"
   workflow_dispatch:
     inputs:
       week:
@@ -21,7 +23,7 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false   # let a running update finish; the next one waits
 
 jobs:
   when:
@@ -37,7 +39,7 @@ jobs:
           # Hours behind UTC in New York right now: 4 during daylight saving, 5 otherwise.
           offset=$(TZ=America/New_York date +%z | sed 's/^-0*//;s/00$//')
           case "$offset:$SCHEDULE" in
-            "4:0 9 * * *"|"5:0 10 * * *") go=true ;;
+            "4:0 9 * * *"|"5:0 10 * * *"|*:"17 */3 * * *") go=true ;;
             *) go=false ;;
           esac
           echo "New York is UTC-$offset; schedule '$SCHEDULE' -> go=$go"
