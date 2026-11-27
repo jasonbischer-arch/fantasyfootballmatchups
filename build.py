@@ -8,7 +8,6 @@ defense allows to QBs, RBs, WRs and TEs, player usage and team tendencies, and w
   site/index.html                      the website
   site/assets/                         stylesheet, script, logo
   site/data.json                       everything the site shows
-  site/blog/                           blog posts from blog/*.md (see blog.py)
   site/Week_<N>_Matchups_<FMT>.xlsx    spreadsheet versions (PPR / Half / Standard)
 
 Usage:
@@ -977,10 +976,6 @@ def write_site(data: dict, preview: Path | None) -> None:
             "players": "0.8", "schedule": "0.8", "teams": "0.7"}
     urls = "".join(f"  <url><loc>{SITE_URL if r[0] == 'home' else SITE_URL + r[0] + '/'}</loc><lastmod>{today}</lastmod>"
                    f"<changefreq>daily</changefreq><priority>{prio.get(r[0], '0.4')}</priority></url>\n" for r in routes if r[5])
-    from blog import write_blog
-    blog_urls = write_blog(ROOT / "blog", OUT, SITE_URL, gtm_head(), gtm_body())
-    urls += "".join(f"  <url><loc>{u}</loc><lastmod>{mod}</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>\n"
-                    for u, mod in blog_urls)
     (OUT / "sitemap.xml").write_text('<?xml version="1.0" encoding="UTF-8"?>\n'
                                      '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' + urls + "</urlset>\n")
     # Real 404 page (GitHub Pages serves it with a 404 status) with links back into the site.
