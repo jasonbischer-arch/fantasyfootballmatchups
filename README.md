@@ -50,17 +50,15 @@ usage and team tendencies).
 **every day at 5am** (US Eastern), and on every push to `main`.
 To rebuild by hand: **Actions → Update matchup charts → Run workflow** (you can force a week).
 
-## News and blog
+## Blog
 
-- **News** (`/news/`): headlines from public RSS feeds (ESPN, CBS Sports, Yahoo Sports, Pro Football Rumors,
-  RotoBaller), refreshed every 3 hours. Only the headline, source, time and a short summary are shown, linking to the
-  original article. Headlines are tagged with the players they mention and appear in each player's panel.
-  Feeds are listed in `NEWS_FEEDS` in `build.py`.
 - **Blog** (`/blog/`): posts live in Supabase (`posts` table, images in the public `blog` storage bucket). Admins write at
   `/write/` (Markdown editor with preview, cover upload, drafts, publish/unpublish). Published posts appear immediately;
-  every build also pre-renders `/blog/<slug>/` with the full article, Open Graph tags and BlogPosting data for search.
+  every build (every 3 hours) also pre-renders `/blog/<slug>/` with the full article, Open Graph tags, BlogPosting data and
+  "More articles" links, adds it to the sitemap and to the RSS feed at `/blog/feed.xml`. The latest posts show on the home page.
 - **Admins** are rows in `public.admins`, which can only be changed in the Supabase dashboard/SQL:
   `insert into public.admins (user_id) select id from auth.users where email = 'you@example.com';`
+- The old `/news/` address redirects to `/blog/`.
 
 ## Reliability, off-season and keep-alive
 
@@ -102,6 +100,10 @@ rather than double-clicking the file.
   redirect. Account pages (`/login/`, `/account/` …) are `noindex`.
 - `sitemap.xml`, `robots.txt`, a real `404.html`, `favicon.ico`, `site.webmanifest` and JSON-LD structured data
   (WebSite, Organization, WebApplication on the home page; breadcrumbs elsewhere) are generated on every build.
+- **Player pages** (`/player/<name>/`, every fantasy-relevant player) and **team pages** (`/team/<abbr>/`) are pre-built
+  with a written summary, usage, game log and upcoming schedule, so searches like "Ja'Marr Chase matchup" can land on them.
+  Player names across the site link to these pages (and still open the quick panel on click).
+- `/qb/`, `/rb/`, `/wr/`, `/te/` include the full matchup table in the page HTML for search engines.
 - `template/assets/og.png` is the share image; `icon-*.png` are the app icons.
 
 ## Tweaking

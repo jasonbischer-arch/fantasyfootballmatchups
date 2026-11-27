@@ -384,77 +384,6 @@ def load_weather(games: list[dict]) -> dict[str, dict]:
 LAST_INJURY_INFO = {"prev": {}, "teams": set()}
 
 
-# Public RSS feeds. We show only headline, source, time and a short summary, and link to the original article.
-NEWS_FEEDS = [
-    ("ESPN", "https://www.espn.com/espn/rss/nfl/news"),
-    ("CBS Sports", "https://www.cbssports.com/rss/headlines/nfl/"),
-    ("Yahoo Sports", "https://sports.yahoo.com/nfl/rss.xml"),
-    ("Pro Football Rumors", "https://www.profootballrumors.com/feed"),
-    ("RotoBaller", "https://www.rotoballer.com/category/nfl/feed"),
-]
-NEWS_MAX_AGE_HOURS = 96
-# Identify honestly as a feed reader, with a link back to the site (some publishers refuse anonymous scripts).
-FEED_USER_AGENT = "Mozilla/5.0 (compatible; SportsMattressNews/1.0; +https://sportsmattress.io/news/)"
-
-
-def _strip_html(text: str) -> str:
-    import html as _h
-    import re as _re
-    text = _re.sub(r"(?is)<(script|style).*?</\1>", " ", text or "")
-    text = _re.sub(r"<[^>]+>", " ", text)
-    return _re.sub(r"\s+", " ", _h.unescape(text)).strip()
-
-
-def load_news(players: list[dict]) -> list[dict]:
-    """Recent NFL headlines from public RSS feeds, tagged with the players they mention."""
-    import email.utils
-    import re as _re
-    import xml.etree.ElementTree as ET
-    now = dt.datetime.now(dt.timezone.utc)
-    items, seen = [], set()
-    for source, url in NEWS_FEEDS:
-        try:
-            path = fetch(url, "news_" + _re.sub(r"[^a-z0-9]+", "_", source.lower()) + ".xml", max_age_hours=0.5, attempts=2,
-                         user_agent=FEED_USER_AGENT)
-            if path.stat().st_size < 200:
-                raise ValueError("empty response")
-            root = ET.parse(path).getroot()
-        except Exception as e:
-            print(f"  news feed unavailable ({source}): {e}", file=sys.stderr)
-            continue
-        for it in root.iter("item"):
-            title = _strip_html(it.findtext("title"))
-            link = (it.findtext("link") or "").strip()
-            if not title or not link.startswith("https://"):
-                continue
-            try:
-                when = email.utils.parsedate_to_datetime(it.findtext("pubDate") or "")
-                when = when if when.tzinfo else when.replace(tzinfo=dt.timezone.utc)
-            except Exception:
-                continue
-            if (now - when).total_seconds() > NEWS_MAX_AGE_HOURS * 3600:
-                continue
-            key = _re.sub(r"[^a-z0-9]", "", title.lower())[:80]
-            if key in seen:
-                continue
-            seen.add(key)
-            summary = _strip_html(it.findtext("description"))
-            if len(summary) > 220:
-                summary = summary[:217].rsplit(" ", 1)[0] + "…"
-            items.append({"title": title[:200], "link": link, "source": source,
-                          "time": when.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "summary": summary})
-    # Tag fantasy-relevant players mentioned by full name.
-    names = [(p["id"], p["name"]) for p in players if p["ppg"]["ppr"] >= 5 and len(p["name"]) > 6]
-    for it in items:
-        text = f'{it["title"]} {it["summary"]}'
-        ids = [pid for pid, name in names if name in text]
-        if ids:
-            it["players"] = ids[:4]
-    items.sort(key=lambda x: x["time"], reverse=True)
-    print(f"  news: {len(items)} headlines from {len({i['source'] for i in items})} sources", file=sys.stderr)
-    return items[:90]
-
-
 def load_posts() -> list[dict]:
     """Published blog posts from Supabase (public read). Empty if unavailable."""
     url = (f"{SUPABASE_URL}/rest/v1/posts?select=slug,title,excerpt,body_md,cover_url,tags,author_name,published_at,updated_at"
@@ -471,11 +400,232 @@ def load_posts() -> list[dict]:
         return []
 
 
+def more_articles(posts: list[dict], skip: str = "", limit: int = 3) -> str:
+    """Crawlable links to other posts (internal links help every article get found)."""
+    others = [p for p in posts if p.get("slug") != skip][:limit]
+    if not others:
+        return ""
+    items = "".join(f'<li><a href="/blog/{esc_html(p["slug"])}/">{esc_html(p["title"])}</a></li>' for p in others)
+    return f'<aside class="more-posts"><h2>More articles</h2><ul>{items}</ul></aside>'
+
+
+def write_feed(posts: list[dict]) -> None:
+    """RSS 2.0 feed of the latest posts at /blog/feed.xml."""
+    from email.utils import format_datetime
+    from xml.sax.saxutils import escape as x
+    def rfc822(ts):
+        try:
+            return format_datetime(dt.datetime.fromisoformat(str(ts).replace("Z", "+00:00")))
+        except Exception:
+            return format_datetime(dt.datetime.now(dt.timezone.utc))
+    items = "".join(
+        f"<item><title>{x(p['title'])}</title><link>{SITE_URL}blog/{p['slug']}/</link>"
+        f"<guid isPermaLink=\"true\">{SITE_URL}blog/{p['slug']}/</guid><pubDate>{rfc822(p.get('published_at'))}</pubDate>"
+        f"<description>{x(p.get('excerpt') or p['title'])}</description></item>\n" for p in posts[:30])
+    (OUT / "blog").mkdir(parents=True, exist_ok=True)
+    (OUT / "blog" / "feed.xml").write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"><channel>\n'
+        f"<title>The Sports Mattress blog</title><link>{SITE_URL}blog/</link>"
+        f'<atom:link href="{SITE_URL}blog/feed.xml" rel="self" type="application/rss+xml"/>'
+        "<description>Fantasy football analysis, rankings and advice from The Sports Mattress.</description><language>en-us</language>\n"
+        + items + "</channel></rss>\n")
+
+
 def render_markdown(md_text: str) -> str:
     """Article HTML for the pre-built pages. Raw HTML in posts is escaped (posts are Markdown only)."""
     import markdown as _md
     safe = (md_text or "").replace("&", "&amp;").replace("<", "&lt;")
     return _md.markdown(safe, extensions=["extra", "sane_lists"], output_format="html")
+
+
+# --------------------------------------------------------------------------- SEO pages (players, teams, charts)
+POS_LONG = {"QB": "quarterback", "RB": "running back", "WR": "wide receiver", "TE": "tight end"}
+
+
+def slugify(text: str) -> str:
+    import re as _re
+    import unicodedata
+    t = unicodedata.normalize("NFKD", text.replace("'", "").replace("’", "")).encode("ascii", "ignore").decode().lower()
+    return _re.sub(r"[^a-z0-9]+", "-", t).strip("-")
+
+
+def assign_slugs(data: dict) -> None:
+    """Give every player a URL slug (team added on the rare name clash)."""
+    counts: dict[str, int] = defaultdict(int)
+    for p in data["players"]:
+        counts[slugify(p["name"])] += 1
+    for p in data["players"]:
+        base = slugify(p["name"])
+        p["slug"] = base if counts[base] == 1 else f"{base}-{p['team'].lower()}"
+
+
+def seo_player_pool(data: dict) -> list[dict]:
+    """Players worth their own page: enough games and fantasy-relevant scoring."""
+    return [p for p in data["players"] if p["g"] >= 3 and p["ppg"]["ppr"] >= 3]
+
+
+def _pct(v):
+    return "—" if v is None else f"{round(v * 100)}%"
+
+
+def _f1(v):
+    return "—" if v is None else f"{v:.1f}"
+
+
+def _ordinal(n: int) -> str:
+    return f"{n}{'th' if 10 <= n % 100 <= 20 else {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')}"
+
+
+def _matchup_word(rank: int) -> str:
+    return "great" if rank >= 25 else "good" if rank >= 17 else "tough" if rank >= 9 else "very tough"
+
+
+def player_page(p: dict, data: dict, pos_rank: dict) -> tuple:
+    """(route, title, description, h1, intro, indexable, extra) for a player page."""
+    e = esc_html
+    T = data["teams"]
+    team = T.get(p["team"], {})
+    tname = team.get("name", p["team"])
+    wk, season, off = data["week"], data["season"], data.get("phase") == "offseason"
+    ppr, l3 = p["ppg"]["ppr"], p["l3"]["ppr"]
+    half = (p["ppg"]["ppr"] + p["ppg"]["std"]) / 2
+    rank = pos_rank.get(p["id"])
+    s, r = p["season"], p["recent"]
+    status = (p.get("inj") or {}).get("status")
+    # Plain-English summary built from the numbers.
+    lines = [f"{p['name']} is a {POS_LONG[p['pos']]} for the {tname}. "
+             f"{'In' if off else 'Through Week ' + str(data['statsThrough']) + ' of'} the {season} season he "
+             f"{'averaged' if off else 'is averaging'} {ppr:.1f} PPR points per game ({half:.1f} half PPR, {p['ppg']['std']:.1f} standard) "
+             f"over {p['g']} games" + (f", {p['pos']}{rank} among {POS_LONG[p['pos']]}s." if rank else ".")]
+    if p["g"] >= 4 and abs(l3 - ppr) >= 2:
+        lines.append(f"Over his last 3 games he has averaged {l3:.1f}, {'up from' if l3 > ppr else 'down from'} his season average.")
+    if p["pos"] == "QB":
+        u = p["use"]
+        lines.append(f"He averages {u.get('att', 0):.0f} pass attempts, {u.get('pyd', 0):.0f} passing yards and {u.get('ptd', 0):.1f} "
+                     f"touchdown passes per game, plus {u.get('ryd', 0):.0f} rushing yards.")
+    elif p["pos"] == "RB":
+        lines.append(f"He gets {_pct(s.get('rushShare'))} of the {tname}' carries and {_pct(s.get('tgtShare'))} of their targets, "
+                     f"plays {_pct(s.get('snap'))} of the snaps and averages {s['rzTgt'] + s['rzCar']:.1f} red-zone opportunities per game.")
+    else:
+        lines.append(f"He has a {_pct(s.get('tgtShare'))} target share and {_pct(s.get('airShare'))} of the team's air yards "
+                     f"(WOPR {'—' if s.get('wopr') is None else format(s['wopr'], '.2f')}), "
+                     f"averaging {p['use'].get('tgt', 0):.1f} targets per game on {_pct(s.get('snap'))} of snaps.")
+    if status:
+        lines.append(f"Injury status: {status}" + (f" ({(p.get('inj') or {}).get('injury')})." if (p.get('inj') or {}).get("injury") else "."))
+    elif p.get("missed", 0) >= 1:
+        lines.append(f"He has missed his team's last {p['missed']} game{'s' if p['missed'] > 1 else ''}.")
+    if not off and p.get("opp"):
+        d = data["defenses"][p["pos"]][p["opp"]]
+        rk = d["rank"]["ppr"]
+        lines.append(f"In Week {wk} he {'visits' if p.get('away') else 'hosts'} the {T[p['opp']]['name']}, who rank {rk} of 32 in PPR points "
+                     f"allowed to {POS_LONG[p['pos']]}s ({d['fppg']['ppr']:.1f} per game), a {_matchup_word(rk)} matchup."
+                     + (f" The {tname} are projected to score {team['implied']:.1f} points." if team.get("implied") is not None else ""))
+    elif not off and p.get("bye"):
+        lines.append(f"The {tname} are on bye in Week {wk}.")
+    summary = " ".join(lines)
+
+    idx = {k: i for i, k in enumerate(data["logKeys"])}
+    if p["pos"] == "QB":
+        head, cols = ["Week", "Opp", "Snap %", "Att", "Pass yds", "Pass TD", "INT", "Rush yds", "PPR pts"], ["att", "pyd", "ptd", "int", "ryd"]
+    else:
+        head, cols = ["Week", "Opp", "Snap %", "Targets", "Rec", "Rec yds", "Carries", "Rush yds", "TD", "PPR pts"], ["tgt", "rec", "recyd", "car", "ryd", "td"]
+    rows = "".join("<tr><td>{}</td><td>{}</td><td>{}</td>{}<td><b>{:.1f}</b></td></tr>".format(
+        g[idx["wk"]], e(g[idx["opp"]]), _pct(g[idx["snap"]]), "".join(f"<td>{g[idx[c]]}</td>" for c in cols), g[idx["pts"]])
+        for g in reversed(p["log"]))
+    usage_rows = [("Snap share", s.get("snap"), r.get("snap"), _pct)]
+    if p["pos"] != "QB":
+        usage_rows += [("Target share", s.get("tgtShare"), r.get("tgtShare"), _pct), ("Air yards share", s.get("airShare"), r.get("airShare"), _pct)]
+    if p["pos"] in ("RB", "QB"):
+        usage_rows += [("Rush share", s.get("rushShare"), r.get("rushShare"), _pct)]
+    usage_rows += [("Red-zone chances / game", s["rzTgt"] + s["rzCar"], r["rzTgt"] + r["rzCar"], _f1)]
+    usage = "".join(f"<tr><th scope=\"row\">{lbl}</th><td>{fmt(a)}</td><td>{fmt(b)}</td></tr>" for lbl, a, b, fmt in usage_rows)
+    sched = ""
+    if not off:
+        nxt = [g for g in team.get("sched", [])][:5]
+        sched = "".join(f"<li>Week {w}: {'@' if a else 'vs'} <a href=\"/team/{o.lower()}/\">{e(T[o]['name'])}</a> "
+                        f"(rank {data['defenses'][p['pos']][o]['rank']['ppr']} vs {p['pos']}s)</li>" for w, o, a in nxt)
+    html = f"""<div class="static-page" data-static="player">
+<nav class="crumbs" aria-label="Breadcrumb"><a href="/">Home</a> › <a href="/players/">Players</a> › <span>{e(p['name'])}</span></nav>
+<div class="sp-head">{f'<img class="sp-photo" src="{e(p["img"])}" alt="{e(p["name"])}" width="96" height="96" loading="lazy">' if p.get('img') else ''}
+<div><h1>{e(p['name'])}</h1><p class="sp-sub">{p['pos']}{rank or ''} · <a href="/team/{p['team'].lower()}/">{e(tname)}</a>{f' · <b>{e(status)}</b>' if status else ''}</p></div></div>
+<p class="sp-summary">{e(summary)}</p>
+<div class="sp-stats"><div><span>PPR pts/game</span><b>{ppr:.1f}</b></div><div><span>Last 3 games</span><b>{l3:.1f}</b></div>
+<div><span>Games</span><b>{p['g']}</b></div><div><span>Position rank</span><b>{p['pos']}{rank or '—'}</b></div></div>
+<h2>Usage</h2><div class="table-box"><table><thead><tr><th scope="col">Stat</th><th scope="col">Season</th><th scope="col">Last 3</th></tr></thead><tbody>{usage}</tbody></table></div>
+<h2>Game log</h2><div class="table-box"><table><thead><tr>{''.join(f'<th scope="col">{h}</th>' for h in head)}</tr></thead><tbody>{rows}</tbody></table></div>
+{f'<h2>Upcoming schedule</h2><ul class="sp-list">{sched}</ul>' if sched else ''}
+<p class="sp-tools">Compare him in <a href="/start-sit/">Start / Sit</a>, value him in the <a href="/trade/">Trade Analyzer</a>, or see the <a href="/{p['pos'].lower()}/">{p['pos']} matchup chart</a>.</p>
+</div>"""
+    word = "Final Stats" if off else f"Week {wk} Matchup"
+    title = f"{p['name']} Fantasy: {word}, Usage & Stats · The Sports Mattress"
+    desc = (f"{p['name']} ({p['pos']}, {tname}) fantasy stats: {ppr:.1f} PPR points per game" +
+            (f", {_pct(s.get('tgtShare'))} target share" if p['pos'] in ('WR', 'TE') else f", {_pct(s.get('rushShare'))} rush share" if p['pos'] == 'RB' else "") +
+            (f", Week {wk} matchup vs {p['opp']}" if not off and p.get('opp') else "") + ", usage trends and game log.")
+    return (f"player/{p['slug']}", title, desc[:300], p["name"], "", True,
+            {"static_html": html, "image": p.get("img") and p["img"].replace(",w_120/", ",w_600/"),
+             "crumbs": [("Players", SITE_URL + "players/")], "modified": data["updated"]})
+
+
+def team_page(abbr: str, data: dict) -> tuple:
+    e = esc_html
+    T, wk, off = data["teams"], data["week"], data.get("phase") == "offseason"
+    t = T[abbr]
+    name = t["name"]
+    players = sorted([p for p in data["players"] if p["team"] == abbr and p["g"] >= 3], key=lambda p: -p["ppg"]["ppr"])[:12]
+    defs = "".join(f"<tr><th scope=\"row\">{pos}</th><td>{data['defenses'][pos][abbr]['rank']['ppr']} of 32</td>"
+                   f"<td>{data['defenses'][pos][abbr]['fppg']['ppr']:.1f}</td></tr>" for pos in ("QB", "RB", "WR", "TE"))
+    plist = "".join(f"<li><a href=\"/player/{p['slug']}/\">{e(p['name'])}</a> <span class=\"muted\">{p['pos']} · {p['ppg']['ppr']:.1f} PPR pts/g</span></li>"
+                    for p in players if p.get("slug"))
+    soft = max(("QB", "RB", "WR", "TE"), key=lambda pos: data["defenses"][pos][abbr]["rank"]["ppr"])
+    tough = min(("QB", "RB", "WR", "TE"), key=lambda pos: data["defenses"][pos][abbr]["rank"]["ppr"])
+    lines = [f"The {name} score {t.get('ppg', 0):.1f} points and allow {t.get('papg', 0):.1f} per game this season."]
+    if t.get("plays") is not None:
+        lines.append(f"They run {t['plays']:.1f} plays per game and drop back to pass on {_pct(t.get('passRate'))} of plays"
+                     + (f" ({'+' if (t.get('proe') or 0) > 0 else ''}{_f1(t.get('proe'))}% pass rate over expected)." if t.get("proe") is not None else "."))
+    lines.append(f"Their defense is softest against {POS_LONG[soft]}s (rank {data['defenses'][soft][abbr]['rank']['ppr']} of 32 in PPR points allowed) "
+                 f"and toughest against {POS_LONG[tough]}s (rank {data['defenses'][tough][abbr]['rank']['ppr']}).")
+    if not off and t.get("opp"):
+        lines.append(f"In Week {wk} they {'visit' if t.get('away') else 'host'} the {T[t['opp']]['name']}"
+                     + (f" and are projected to score {t['implied']:.1f} points (over/under {t['total']})." if t.get("implied") is not None else "."))
+    elif not off:
+        lines.append(f"They are on bye in Week {wk}.")
+    sched = "" if off else "".join(f"<li>Week {w}: {'@' if a else 'vs'} <a href=\"/team/{o.lower()}/\">{e(T[o]['name'])}</a></li>" for w, o, a in t.get("sched", [])[:6])
+    html = f"""<div class="static-page" data-static="team">
+<nav class="crumbs" aria-label="Breadcrumb"><a href="/">Home</a> › <a href="/teams/">Teams</a> › <span>{e(name)}</span></nav>
+<h1>{e(name)} fantasy football</h1>
+<p class="sp-summary">{e(' '.join(lines))}</p>
+<div class="sp-stats"><div><span>Points / game</span><b>{_f1(t.get('ppg'))}</b></div><div><span>Allowed / game</span><b>{_f1(t.get('papg'))}</b></div>
+<div><span>Plays / game</span><b>{_f1(t.get('plays'))}</b></div><div><span>Week {wk} projection</span><b>{_f1(t.get('implied')) if not off else '—'}</b></div></div>
+<h2>Defense vs each position</h2><p class="muted">Rank 1 allows the fewest PPR points, 32 the most.</p>
+<div class="table-box"><table><thead><tr><th scope="col">Position</th><th scope="col">Rank</th><th scope="col">PPR pts allowed / game</th></tr></thead><tbody>{defs}</tbody></table></div>
+<h2>Fantasy players</h2><ul class="sp-list">{plist}</ul>
+{f'<h2>Schedule</h2><ul class="sp-list">{sched}</ul>' if sched else ''}
+<p class="sp-tools">See every team's <a href="/schedule/">strength of schedule</a> and <a href="/teams/">tendencies</a>.</p>
+</div>"""
+    title = f"{name} Fantasy Football: {'Final Stats' if off else f'Week {wk} Outlook'}, Defense Ranks & Schedule · The Sports Mattress"
+    desc = (f"{name} fantasy football: {t.get('ppg', 0):.1f} points per game, defense ranks vs QB, RB, WR and TE, "
+            f"pace and pass rate, schedule and the team's top fantasy players.")
+    return (f"team/{abbr.lower()}", title, desc, name, "", True,
+            {"static_html": html, "crumbs": [("Teams", SITE_URL + "teams/")], "modified": data["updated"]})
+
+
+def chart_table_html(data: dict, pos: str) -> str:
+    """Crawlable version of a matchup chart (the app replaces it with the full interactive chart)."""
+    e, T = esc_html, data["teams"]
+    rows = [r for r in data["positions"][pos]["rows"] if not r.get("bye")]
+    rows.sort(key=lambda r: -r["def"]["rank"]["ppr"])
+    slugs = {p["id"]: p.get("slug") for p in data["players"]}
+    def names(r):
+        out = []
+        for i, n in enumerate(r["players"]):
+            sl = slugs.get(r["ids"][i]) if i < len(r.get("ids", [])) else None
+            out.append(f'<a href="/player/{sl}/">{e(n)}</a>' if sl else e(n))
+        return " / ".join(out)
+    body = "".join(f"<tr><td>{names(r)} <span class=\"muted\">{r['team']}</span></td><td>{'@' if r['away'] else 'vs'} "
+                   f"<a href=\"/team/{r['opp'].lower()}/\">{r['opp']}</a></td><td>{r['def']['rank']['ppr']}</td><td>{r['def']['fppg']['ppr']:.1f}</td>"
+                   f"<td>{_f1(T[r['team']].get('implied'))}</td></tr>" for r in rows)
+    return (f'<div class="table-box"><table><thead><tr><th scope="col">{pos}</th><th scope="col">Opponent</th><th scope="col">Rank</th>'
+            f'<th scope="col">PPR pts allowed / game</th><th scope="col">Team total</th></tr></thead><tbody>{body}</tbody></table></div>')
 
 
 def load_injuries(season: int, week: int) -> dict[str, dict]:
@@ -961,9 +1111,6 @@ def site_routes(data: dict) -> list[tuple]:
         ("terms", "Terms of Use · The Sports Mattress", "Terms of use for The Sports Mattress.", "Terms of Use", "", True),
     ]
     routes += [
-        ("news", "Fantasy Football News · The Sports Mattress",
-         "The latest NFL and fantasy football headlines from around the web, updated throughout the day, with the players they mention.",
-         "Fantasy football news", "The latest headlines from around the web.", True),
         ("blog", "Fantasy Football Articles · The Sports Mattress",
          "Fantasy football analysis, rankings and advice from The Sports Mattress.", "The Sports Mattress blog",
          "Articles, rankings and advice from The Sports Mattress.", True),
@@ -971,8 +1118,18 @@ def site_routes(data: dict) -> list[tuple]:
     for post in data.get("posts", []):
         routes.append((f'blog/{post["slug"]}', f'{post["title"]} · The Sports Mattress', post.get("excerpt") or post["title"],
                        post["title"], post.get("excerpt") or "", True,
-                       {"article_html": render_markdown(post.get("body_md", "")), "image": post.get("cover_url"),
+                       {"article_html": render_markdown(post.get("body_md", "")) + more_articles(data["posts"], post["slug"]),
+                        "image": post.get("cover_url"),
                         "published": post.get("published_at"), "modified": post.get("updated_at"), "author": post.get("author_name")}))
+    if not off:
+        routes = [r if r[0] not in ("qb", "rb", "wr", "te") else r + ({"chart_html": chart_table_html(data, r[0].upper())},) for r in routes]
+    pool = seo_player_pool(data)
+    pos_rank = {}
+    for pos in ("QB", "RB", "WR", "TE"):
+        for i, p in enumerate(sorted([p for p in data["players"] if p["pos"] == pos], key=lambda p: -p["ppg"]["ppr"]), 1):
+            pos_rank[p["id"]] = i
+    routes += [player_page(p, data, pos_rank) for p in pool]
+    routes += [team_page(t, data) for t in sorted(data["teams"])]
     routes.append(("write", "Write · The Sports Mattress", "Write and publish articles.", "Write", "", False))
     for slug, t in (("login", "Log in"), ("signup", "Create account"), ("forgot", "Reset password"), ("reset", "Set new password"), ("account", "Your account")):
         routes.append((slug, f"{t} · The Sports Mattress", "Your free The Sports Mattress account.", t, "", False))
@@ -1045,18 +1202,22 @@ def render_html(downloads: bool, build_id: str, clean: bool = False, base: str =
                 {"@type": "ListItem", "position": 3, "name": h1, "item": url}]}]}
         head_extra = '<script type="application/ld+json">' + json.dumps(ld, separators=(",", ":")).replace("</", "<\\/") + "</script>"
     elif indexable:
+        trail = [("Home", SITE_URL)] + list(extra.get("crumbs", [])) + [(h1, url)]
         crumbs = {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [
-            {"@type": "ListItem", "position": 1, "name": "Home", "item": SITE_URL},
-            {"@type": "ListItem", "position": 2, "name": h1, "item": url}]}
+            {"@type": "ListItem", "position": i + 1, "name": n, "item": u} for i, (n, u) in enumerate(trail)]}
         head_extra = '<script type="application/ld+json">' + json.dumps(crumbs, separators=(",", ":")) + "</script>"
     html = html.replace("<!--__HEAD_EXTRA__-->", head_extra)
     # Crawlable fallback shown until the app renders (and to clients without JavaScript).
     links = "".join(f'<li><a href="{base or "/"}{"" if r[0] == "home" else r[0] + "/"}">{esc_html(r[3])}</a></li>'
                     for r in (routes or []) if r[5] and r[0] not in ("privacy", "terms") and "/" not in r[0]) if clean else ""
     article = f'<article class="post-body">{extra["article_html"]}</article>' if extra.get("article_html") else ""
-    fallback = (f'<div class="seo-fallback"><h1>{esc_html(h1)}</h1>' + (f"<p>{esc_html(intro)}</p>" if intro else "") + article
-                + '<p class="loading">Loading this week\'s data…</p>' + (f'<ul class="seo-links">{links}</ul>' if links else "")
-                + "<noscript><p>The Sports Mattress needs JavaScript to show its charts and tools.</p></noscript></div>")
+    if extra.get("static_html"):
+        fallback = extra["static_html"]          # player and team pages are complete, pre-built pages
+    else:
+        fallback = (f'<div class="seo-fallback"><h1>{esc_html(h1)}</h1>' + (f"<p>{esc_html(intro)}</p>" if intro else "") + article
+                    + extra.get("chart_html", "")
+                    + '<p class="loading">Loading this week\'s data…</p>' + (f'<ul class="seo-links">{links}</ul>' if links else "")
+                    + "<noscript><p>The Sports Mattress needs JavaScript to show its charts and tools.</p></noscript></div>")
     html = html.replace("<!--__FALLBACK__-->", fallback)
     html = html.replace("__BUILD__", build_id).replace("__SITE_URL__", SITE_URL).replace("__BASE__", base)
     html = html.replace("/*__SUPABASE__*/null", json.dumps({"url": SUPABASE_URL, "key": SUPABASE_ANON_KEY, "site": SITE_URL}))
@@ -1087,6 +1248,7 @@ def write_site(data: dict, preview: Path | None) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(page)
     write_xlsx(data)
+    write_feed(data.get("posts", []))
     write_ico(ROOT / "template" / "assets" / "icon-32.png", OUT / "favicon.ico")
     (OUT / "site.webmanifest").write_text(json.dumps({
         "name": "The Sports Mattress", "short_name": "Sports Mattress",
@@ -1100,15 +1262,21 @@ def write_site(data: dict, preview: Path | None) -> None:
     (OUT / "robots.txt").write_text(f"User-agent: *\nAllow: /\nDisallow: /account/\n\nSitemap: {SITE_URL}sitemap.xml\n")
     prio = {"home": "1.0", "trade": "0.9", "qb": "0.9", "rb": "0.9", "wr": "0.9", "te": "0.9", "start-sit": "0.9", "my-team": "0.8",
             "players": "0.8", "schedule": "0.8", "teams": "0.7"}
-    prio.update({"news": "0.8", "blog": "0.8"})
+    prio.update({"blog": "0.9"})
     def lastmod(r):
         return ((r[6].get("modified") or r[6].get("published") or today)[:10]) if len(r) > 6 else today
     urls = "".join(f"  <url><loc>{SITE_URL if r[0] == 'home' else SITE_URL + r[0] + '/'}</loc><lastmod>{lastmod(r)}</lastmod>"
                    f"<changefreq>{'weekly' if r[0].startswith('blog/') else 'daily'}</changefreq>"
-                   f"<priority>{'0.7' if r[0].startswith('blog/') else prio.get(r[0], '0.4')}</priority></url>\n" for r in routes if r[5])
+                   f"<priority>{'0.7' if r[0].startswith('blog/') else '0.6' if r[0].startswith(('player/', 'team/')) else prio.get(r[0], '0.4')}</priority></url>\n"
+                   for r in routes if r[5])
     (OUT / "sitemap.xml").write_text('<?xml version="1.0" encoding="UTF-8"?>\n'
                                      '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' + urls + "</urlset>\n")
     # Real 404 page (GitHub Pages serves it with a 404 status) with links back into the site.
+    (OUT / "news").mkdir(exist_ok=True)
+    (OUT / "news" / "index.html").write_text(
+        f'<!doctype html>\n<html lang="en"><meta charset="utf-8"><title>Blog · The Sports Mattress</title>'
+        f'<link rel="canonical" href="{SITE_URL}blog/"><meta name="robots" content="noindex, follow">'
+        f'<meta http-equiv="refresh" content="0; url={SITE_URL}blog/"><p><a href="{SITE_URL}blog/">Go to the blog</a></p></html>\n')
     # 404 page = the app shell (served with a 404 status). The app shows "Page not found" for unknown
     # addresses, and new blog posts open right away even before their page has been built.
     nf = ("notfound", "Page not found · The Sports Mattress", "That page doesn't exist or has moved.", "Page not found",
@@ -1199,7 +1367,7 @@ def main() -> None:
     ap.add_argument("--preview", type=Path, help="also write a body-only preview site into this folder")
     args = ap.parse_args()
     data = build(args.season or pick_season(), args.week)
-    data["news"] = load_news(data["players"])
+    assign_slugs(data)
     data["posts"] = load_posts()
     write_site(data, args.preview)
 
