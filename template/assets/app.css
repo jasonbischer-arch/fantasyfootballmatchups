@@ -651,7 +651,7 @@ table.h2h tbody th { font: 600 13px/1.2 var(--body); color: var(--muted); backgr
 .post-body > * { margin: 0 0 1em; }
 .post-body h2 { font-size: 28px; margin-top: 1.4em; }
 .post-body h3 { font-size: 21px; margin-top: 1.2em; }
-.post-body img { border-radius: 10px; }
+.post-body img { border-radius: 10px; max-width: 100%; height: auto; display: block; }
 .post-body blockquote { margin-left: 0; padding: 4px 0 4px 18px; border-left: 4px solid var(--s-yellow); color: var(--muted); }
 .post-body ul, .post-body ol { padding-left: 24px; }
 .post-body table { width: auto; border: 1px solid var(--line); font-size: 15px; }
