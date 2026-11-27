@@ -647,14 +647,14 @@ table.h2h tbody th { font: 600 13px/1.2 var(--body); color: var(--muted); backgr
 .post-dek { margin: 0; font-size: 19px; color: var(--muted); line-height: 1.5; }
 .post-byline { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; font-size: 14px; color: var(--muted); font-weight: 600; }
 .post-hero { width: 100%; border-radius: 12px; }
-.post-body { font-size: 18px; line-height: 1.7; }
+.post-body { font-size: 18px; line-height: 1.7; min-width: 0; overflow-wrap: anywhere; }
 .post-body > * { margin: 0 0 1em; }
 .post-body h2 { font-size: 28px; margin-top: 1.4em; }
 .post-body h3 { font-size: 21px; margin-top: 1.2em; }
-.post-body img { border-radius: 10px; }
+.post-body img { border-radius: 10px; max-width: min(100%, 640px); height: auto; display: block; margin-inline: auto; }
 .post-body blockquote { margin-left: 0; padding: 4px 0 4px 18px; border-left: 4px solid var(--s-yellow); color: var(--muted); }
 .post-body ul, .post-body ol { padding-left: 24px; }
-.post-body table { width: auto; border: 1px solid var(--line); font-size: 15px; }
+.post-body table { width: auto; border: 1px solid var(--line); font-size: 15px; display: block; max-width: 100%; overflow-x: auto; }
 .post-body code { background: var(--chip); padding: 1px 5px; border-radius: 4px; font-size: .9em; }
 .post-share { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; border-top: 1px solid var(--line); padding-top: 16px; }
 .more-posts { margin-top: 32px; }
