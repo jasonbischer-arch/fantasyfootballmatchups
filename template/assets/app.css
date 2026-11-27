@@ -697,3 +697,22 @@ table.h2h tbody th { font: 600 13px/1.2 var(--body); color: var(--muted); backgr
 .sp-tools { color: var(--muted); }
 .static-page table th[scope="row"] { text-align: left; color: var(--muted); font-weight: 600; background: var(--surface); }
 @media (max-width: 560px) { .sp-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } .sp-photo { width: 72px; height: 72px; } }
+
+/* weekly email sign-up */
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.nl { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 20px 32px; align-items: center; padding: 24px 28px; margin: 28px 0; position: relative; overflow: hidden; }
+.nl::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 4px; background: linear-gradient(90deg, var(--s-red), var(--s-orange) 35%, var(--s-yellow) 60%, var(--s-green)); }
+.nl h2 { margin: 4px 0 6px; }
+.nl-copy p:last-child { margin: 0; color: var(--muted); }
+.nl-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; position: relative; }
+.nl-form input[type=email] { min-width: 0; padding: 11px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); font: inherit; }
+.nl-note, .nl-msg { grid-column: 1 / -1; margin: 0; font-size: 13px; color: var(--muted); }
+.nl-msg:empty { display: none; }
+.nl-done { grid-column: 1 / -1; margin: 0; }
+.nl-hp { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }
+.foot-nl { margin-top: 16px; display: block; max-width: 380px; }
+.foot-nl label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+.foot-nl-row { display: flex; gap: 8px; }
+.foot-nl-row input { flex: 1; min-width: 0; }
+.foot-nl .nl-msg { margin-top: 6px; }
+@media (max-width: 760px) { .nl { grid-template-columns: 1fr; padding: 22px 20px 20px; } .nl-form { grid-template-columns: 1fr; } }

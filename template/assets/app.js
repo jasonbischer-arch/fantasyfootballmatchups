@@ -6,8 +6,9 @@ const POS = ["QB", "RB", "WR", "TE"];
 const POS_NAME = { QB: "quarterbacks", RB: "running backs", WR: "wide receivers", TE: "tight ends" };
 const RECENT = 3;
 const PLAYOFF_WEEKS = new Set([15, 16, 17]);
-const PAGES = ["home", "matchups", "start-sit", "my-team", "trade", "players", "schedule", "teams", "about", "how-it-works", "privacy", "terms", "login", "signup", "forgot", "reset", "account", "blog", "write", "notfound"];
+const PAGES = ["home", "matchups", "start-sit", "my-team", "trade", "players", "schedule", "teams", "about", "how-it-works", "privacy", "terms", "login", "signup", "forgot", "reset", "account", "blog", "write", "unsubscribe", "notfound"];
 const PAGE_TITLES = {
+  unsubscribe: "Unsubscribe",
   home: "Fantasy Football Matchups, Start/Sit and Trade Analyzer", "start-sit": "Start / Sit", "my-team": "My Team",
   trade: "Trade Analyzer", players: "Player Usage", schedule: "Strength of Schedule", teams: "Team Tendencies",
   about: "About", "how-it-works": "How It Works", privacy: "Privacy", terms: "Terms of Use",
@@ -236,7 +237,7 @@ function boot() {
   page.addEventListener("click", onClick);
   page.addEventListener("input", onInput);
   page.addEventListener("change", onInput);
-  page.addEventListener("submit", e => { e.preventDefault(); onAuthSubmit(e); onSettingsSubmit(e); });
+  page.addEventListener("submit", e => { if (e.target.closest("form[data-newsletter]")) return; e.preventDefault(); onAuthSubmit(e); onSettingsSubmit(e); });
   $("#playerDialog").addEventListener("click", e => {
     if (e.target.id === "playerDialog") return closePlayer();
     onClick(e);
@@ -322,7 +323,7 @@ function render() {
   const fn = { home: renderHome, matchups: renderMatchups, "start-sit": renderStartSit, "my-team": renderMyTeam,
     players: renderPlayers, schedule: renderSchedule, teams: renderTeams, trade: renderTrade, about: renderAbout, "how-it-works": renderHow, privacy: renderPrivacy, terms: renderTerms,
     login: renderLogin, signup: renderSignup, forgot: renderForgot, reset: renderReset, account: renderAccount,
-    blog: renderBlog, post: renderPost, write: renderWrite, notfound: renderNotFound,
+    blog: renderBlog, post: renderPost, write: renderWrite, unsubscribe: renderUnsubscribe, notfound: renderNotFound,
     static: () => { if (!$("#page [data-static]")) renderNotFound(); } }[state.page];
   // Use the same search-friendly titles as the pre-built pages.
   const T = window.TSM_TITLES || {};
@@ -648,6 +649,8 @@ function renderHome() {
       <div class="section-head"><h2>Best matchups this week</h2><span class="muted" style="font-size:13px">Rank 32 = defense allows the most ${esc(fmtLabel())} points to the position</span></div>
       <div class="grid-4">${best}</div>
     </section>
+
+    ${newsletterBox("home")}
 
     ${watchHtml}
     <section class="grid-2" style="align-items:start">
@@ -1661,9 +1664,10 @@ function renderPrivacy() {
     ["With an account", `<p>If you create an account we store your <strong>email address</strong>, an optional <strong>display name</strong>, your <strong>password</strong> (as a secure hash we can't read), and what you choose to save: <strong>teams, saved trades, watchlist and settings</strong> (scoring format, league size, superflex). This is used only to run your account. We don't sell it or share it.</p>
       <p>Account data is stored with <a href="https://supabase.com/" target="_blank" rel="noopener">Supabase</a> in the United States. Each account can only read and change its own data. You stay logged in on a device until you log out.</p>`],
     ["Deleting your data", `<p>Delete your account any time from <a href="#account">Your Account</a>. That permanently removes your login and everything saved to it.</p>`],
-    ["Emails", `<p>We only email you for account tasks you start, like confirming your address or resetting your password. No newsletters or marketing.</p>`],
+    ["Emails", `<p>We email you for account tasks you start, like confirming your address or resetting your password.</p>
+      <p>If you sign up for the <strong>weekly email</strong>, we store your email address, when and where on the site you signed up, and whether you've unsubscribed. We use it only to send that email (a welcome note, then one email a week during the season with matchups, start/sit calls and occasional offers from partners). Every email has an unsubscribe link, and unsubscribing stops all of them. Emails are sent through <a href="https://resend.com/" target="_blank" rel="noopener">Resend</a>. We don't sell or share the list.</p>`],
     ["Analytics", `<p>We use Google Analytics, through Google Tag Manager, to count visits and see which pages and tools people use. It uses cookies and collects standard information such as pages viewed, approximate location, device and browser. We don't send it your email, roster or anything you type. Analytics cookies are only used if you allow them: visitors in the EU, UK and Switzerland are asked first, and anyone can accept or reject them in <button type="button" class="link-btn" data-cookie-settings>cookie settings</button> (also linked at the bottom of every page). You can also use Google's <a href="https://tools.google.com/dlpage/gaoptout" target="_blank" rel="noopener">opt-out add-on</a>. We never use advertising cookies.</p>`],
-    ["What we don't collect", `<p>No payment details and no advertising trackers. We don't sell your information.</p>`],
+    ["What we don't collect", `<p>No advertising trackers, and we don't sell your information.</p>`],
     ["Other services", `<p>To show the site, your browser loads fonts from Google Fonts, player photos from NFL.com and team logos from ESPN. Those services receive standard request information (like your IP address) under their own privacy policies. The site is hosted on GitHub Pages.</p>`],
     ["Contact", `<p>Questions about your data, or want it removed? Email <a href="mailto:${CONTACT}">${CONTACT}</a>.</p>`],
     ["Changes", `<p>If this changes, this page will be updated first.</p>`],
@@ -2144,6 +2148,7 @@ async function renderPost() {
         <a class="btn small" href="https://www.reddit.com/submit?url=${share}&title=${text}" target="_blank" rel="noopener">Reddit</a>
         <button type="button" class="btn small" data-action="copyLink" data-url="${esc(url)}">Copy link</button>
         ${account.isAdmin ? `<button type="button" class="btn small primary" data-action="editPost" data-id="${post.id}">Edit</button>` : ""}</div>
+      ${newsletterBox("post")}
       <section class="more-posts" id="morePosts" hidden></section>
     </article>`;
   cleanLinks($("#page"));
@@ -2156,6 +2161,54 @@ async function renderPost() {
   }
 }
 
+// ---------------------------------------------------------------- weekly email
+function newsletterBox(source) {
+  return `<section class="panel nl" aria-labelledby="nl-${source}">
+    <div class="nl-copy"><p class="eyebrow">Free weekly email</p>
+      <h2 id="nl-${source}">Get the Sunday cheat sheet</h2>
+      <p>Every Saturday during the season: the best matchups at every position, usage risers, injury news and our close start/sit calls. Two-minute read.</p></div>
+    <form class="nl-form" data-newsletter="${source}" novalidate>
+      <label class="sr-only" for="nl-email-${source}">Email address</label>
+      <input id="nl-email-${source}" name="email" type="email" autocomplete="email" inputmode="email" placeholder="you@email.com" required maxlength="254">
+      <input name="website" type="text" tabindex="-1" autocomplete="off" class="nl-hp" aria-hidden="true">
+      <button type="submit" class="btn primary">Sign me up</button>
+      <p class="nl-note">Free. Unsubscribe any time. <a href="${CLEAN ? "/privacy/" : "#privacy"}">Privacy</a></p>
+      <p class="nl-msg" role="status" aria-live="polite"></p>
+    </form>
+  </section>`;
+}
+async function onNewsletterSubmit(e) {
+  const form = e.target.closest && e.target.closest("form[data-newsletter]");
+  if (!form) return;
+  e.preventDefault();
+  const msg = form.querySelector(".nl-msg"), btn = form.querySelector("button"), email = form.email.value.trim();
+  if (form.website.value) return;                                          // bots fill the hidden field
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { msg.textContent = "Enter a valid email address."; form.email.focus(); return; }
+  if (!sb) { msg.textContent = "Sign-up isn't available right now. Please try again later."; return; }
+  btn.disabled = true; msg.textContent = "Signing you up…";
+  const { error } = await sb.rpc("subscribe", { p_email: email, p_source: form.dataset.newsletter });
+  btn.disabled = false;
+  if (error) { msg.textContent = "That didn't work. Check the address and try again."; return; }
+  form.innerHTML = `<p class="nl-done"><strong>You're in.</strong> Watch your inbox for a welcome email, then the cheat sheet every Saturday.</p>`;
+  window.dataLayer = window.dataLayer || [];
+  window.dataLayer.push({ event: "newsletter_signup", signup_source: form.dataset.newsletter });
+}
+document.addEventListener("submit", onNewsletterSubmit, true);
+
+async function renderUnsubscribe() {
+  const token = new URLSearchParams(location.search).get("t") || "";
+  const head = pageHead("Weekly email", "Unsubscribe", "");
+  if (!/^[0-9a-f-]{36}$/i.test(token)) {
+    $("#page").innerHTML = `${head}<div class="panel panel-pad"><p>This unsubscribe link is incomplete. Use the link at the bottom of any of our emails, or email <a href="mailto:${CONTACT}">${CONTACT}</a> and we'll remove you.</p></div>`;
+    return;
+  }
+  $("#page").innerHTML = `${head}<div class="panel panel-pad"><p class="loading">Unsubscribing…</p></div>`;
+  const { data, error } = sb ? await sb.rpc("unsubscribe", { p_token: token }) : { error: true };
+  $("#page").innerHTML = `${head}<div class="panel panel-pad">${error || !data
+    ? `<p>We couldn't find that subscription. If you're still getting emails, reply to one or email <a href="mailto:${CONTACT}">${CONTACT}</a> and we'll remove you.</p>`
+    : `<p><strong>You're unsubscribed.</strong> You won't get any more emails from us. Changed your mind? You can sign up again any time on the <a href="#home">home page</a>.</p>`}</div>`;
+  cleanLinks($("#page"));
+}
 function renderNotFound() {
   $("#page").innerHTML = `${pageHead("404", "Page not found", "That page doesn't exist or has moved.")}
     <p><a class="btn primary" href="#home">Go to this week's matchups</a></p>
