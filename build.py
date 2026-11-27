@@ -1131,7 +1131,7 @@ def site_routes(data: dict) -> list[tuple]:
     routes += [player_page(p, data, pos_rank) for p in pool]
     routes += [team_page(t, data) for t in sorted(data["teams"])]
     routes.append(("write", "Write · The Sports Mattress", "Write and publish articles.", "Write", "", False))
-    for slug, t in (("login", "Log in"), ("signup", "Create account"), ("forgot", "Reset password"), ("reset", "Set new password"), ("account", "Your account")):
+    for slug, t in (("login", "Log in"), ("signup", "Create account"), ("forgot", "Reset password"), ("reset", "Set new password"), ("account", "Your account"), ("unsubscribe", "Unsubscribe")):
         routes.append((slug, f"{t} · The Sports Mattress", "Your free The Sports Mattress account.", t, "", False))
     return routes
 
