@@ -6,12 +6,12 @@ const POS = ["QB", "RB", "WR", "TE"];
 const POS_NAME = { QB: "quarterbacks", RB: "running backs", WR: "wide receivers", TE: "tight ends" };
 const RECENT = 3;
 const PLAYOFF_WEEKS = new Set([15, 16, 17]);
-const PAGES = ["home", "matchups", "start-sit", "my-team", "trade", "players", "schedule", "teams", "about", "how-it-works", "privacy", "terms", "login", "signup", "forgot", "reset", "account", "news", "blog", "write", "notfound"];
+const PAGES = ["home", "matchups", "start-sit", "my-team", "trade", "players", "schedule", "teams", "about", "how-it-works", "privacy", "terms", "login", "signup", "forgot", "reset", "account", "blog", "write", "notfound"];
 const PAGE_TITLES = {
   home: "Fantasy Football Matchups, Start/Sit and Trade Analyzer", "start-sit": "Start / Sit", "my-team": "My Team",
   trade: "Trade Analyzer", players: "Player Usage", schedule: "Strength of Schedule", teams: "Team Tendencies",
   about: "About", "how-it-works": "How It Works", privacy: "Privacy", terms: "Terms of Use",
-  news: "Fantasy Football News", blog: "Blog", write: "Write", notfound: "Page not found", post: "Article",
+  blog: "Blog", write: "Write", notfound: "Page not found", post: "Article",
   login: "Log in", signup: "Create account", forgot: "Reset password", reset: "Set new password", account: "Your account",
 };
 
@@ -20,7 +20,8 @@ let D = null;                         // data.json
 const CLEAN = !!window.TSM_CLEAN;
 const BASE = window.TSM_BASE || "";
 const routePath = r => (r === "home" ? "/" : `/${r}/`);
-function isRoute(r) { return PAGES.includes(r) || POS.includes(String(r).toUpperCase()) || /^blog\/[a-z0-9-]+$/.test(r); }
+const STATIC_ROUTE = /^(player\/[a-z0-9-]+|team\/[a-z]{2,3})$/;   // pre-built pages (full page loads)
+function isRoute(r) { return PAGES.includes(r) || POS.includes(String(r).toUpperCase()) || /^blog\/[a-z0-9-]+$/.test(r) || STATIC_ROUTE.test(r); }
 function currentRoute() {
   if (CLEAN) return location.pathname.replace(/^\/+|\/+$/g, "").toLowerCase() || "home";
   return location.hash.slice(1).toLowerCase();
@@ -94,7 +95,11 @@ const rankChip = (r, title) => r == null ? `<span class="badge">BYE</span>` : `<
 function avatar(p) {
   return `<span class="avatar" aria-hidden="true">${esc(initials(p.name))}${p.img ? `<img src="${esc(p.img)}" alt="" loading="lazy" decoding="async" width="34" height="34" referrerpolicy="no-referrer">` : ""}</span>`;
 }
-const plink = (p, text) => `<button type="button" class="plink" data-pid="${esc(p.id)}">${esc(text ?? p.name)}</button>`;
+const playerUrl = p => (CLEAN && p.slug ? `/player/${p.slug}/` : null);
+const plink = (p, text) => playerUrl(p)
+  ? `<a class="plink" href="${playerUrl(p)}" data-pid="${esc(p.id)}">${esc(text ?? p.name)}</a>`
+  : `<button type="button" class="plink" data-pid="${esc(p.id)}">${esc(text ?? p.name)}</button>`;
+const teamUrl = abbr => (CLEAN ? `/team/${String(abbr).toLowerCase()}/` : null);
 function sortBtn(key, label, cur) {
   const dir = cur && cur.key === key ? (cur.dir > 0 ? "▲" : "▼") : null;
   return `<button type="button" class="sort" data-sort="${key}"${dir ? ` data-dir="${dir}"` : ""}>${label}</button>`;
@@ -246,7 +251,7 @@ function boot() {
       const a = e.target.closest('a[href^="/"]');
       if (!a || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || a.target === "_blank") return;
       const r = a.getAttribute("href").replace(/^\/+|\/+$/g, "").toLowerCase() || "home";
-      if (!isRoute(r)) return;
+      if (!isRoute(r) || STATIC_ROUTE.test(r)) return;   // player/team pages load as normal pages
       e.preventDefault(); navigate(r);
     });
     cleanLinks();
@@ -259,9 +264,11 @@ function route(scroll) {
   const h = currentRoute();
   if (POS.includes(h.toUpperCase())) { state.page = "matchups"; state.pos = h.toUpperCase(); state.sort = null; }
   else if (/^blog\/[a-z0-9-]+$/.test(h)) { state.page = "post"; state.slug = h.slice(5); }
+  else if (h === "news") state.page = "blog";
+  else if (STATIC_ROUTE.test(h)) state.page = "static";
   else state.page = PAGES.includes(h) ? h : (CLEAN && h !== "home" ? "notfound" : "home");
   if (state.page === "matchups" && !POS.includes(state.pos)) state.pos = "QB";
-  const navPage = { blog: "news", post: "news", write: "news" }[state.page] || state.page;
+  const navPage = { post: "blog", write: "blog" }[state.page] || state.page;
   document.querySelectorAll("#nav a").forEach(a => {
     if (a.dataset.page === navPage) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   });
@@ -315,10 +322,11 @@ function render() {
   const fn = { home: renderHome, matchups: renderMatchups, "start-sit": renderStartSit, "my-team": renderMyTeam,
     players: renderPlayers, schedule: renderSchedule, teams: renderTeams, trade: renderTrade, about: renderAbout, "how-it-works": renderHow, privacy: renderPrivacy, terms: renderTerms,
     login: renderLogin, signup: renderSignup, forgot: renderForgot, reset: renderReset, account: renderAccount,
-    news: renderNews, blog: renderBlog, post: renderPost, write: renderWrite, notfound: renderNotFound }[state.page];
+    blog: renderBlog, post: renderPost, write: renderWrite, notfound: renderNotFound,
+    static: () => { if (!$("#page [data-static]")) renderNotFound(); } }[state.page];
   // Use the same search-friendly titles as the pre-built pages.
   const T = window.TSM_TITLES || {};
-  document.title = T[state.page === "matchups" ? state.pos.toLowerCase() : state.page] ||
+  if (state.page !== "static") document.title = T[state.page === "matchups" ? state.pos.toLowerCase() : state.page] ||
     `${state.page === "matchups" ? `Week ${D.week} ${state.pos} Matchups` : PAGE_TITLES[state.page]} · The Sports Mattress`;
   const active = document.activeElement && document.activeElement.id;
   const caret = active && document.activeElement.selectionStart;
@@ -334,6 +342,13 @@ function render() {
   const pd = $("#playerDialog");
   if (pd.open && pd.dataset.player) fillPlayer(byId.get(pd.dataset.player));
   cleanLinks($("#page")); cleanLinks($("#pdBody"));
+  if (state.page === "home" && $("#homePosts")) loadPosts().then(posts => {
+    const box = $("#homePosts"); if (!box || !posts.length) return;
+    box.hidden = false;
+    box.innerHTML = `<div class="section-head"><h2>From the blog</h2><a href="#blog">All articles →</a></div>
+      <div class="post-grid">${posts.slice(0, 3).map(p => postCard(p)).join("")}</div>`;
+    cleanLinks(box);
+  });
 }
 
 function setMenu(open) {
@@ -652,8 +667,7 @@ function renderHome() {
     </section>
 
 
-    ${(D.news || []).length ? `<section class="section"><div class="section-head"><h2>Latest news</h2><a href="#news">All headlines →</a></div>
-      <div class="panel news-list">${D.news.slice(0, 6).map(n => headlineRow(n, true)).join("")}</div></section>` : ""}
+    <section class="section" id="homePosts" hidden></section>
 
     <section class="section">
       <div class="section-head"><h2>Game slate</h2><span class="muted" style="font-size:13px">Projected points from the betting line</span></div>
@@ -1160,7 +1174,7 @@ function renderTeams() {
     ${pageHead(`Week ${D.week}`, "Team Tendencies", "Fantasy points follow volume. These are the offenses that run the most plays, throw the most, and are projected to score the most this week.")}
     <div class="table-box"><table>
       <thead><tr><th class="sticky l" scope="col">${sortBtn("team", "Team", s)}</th><th scope="col">Wk ${D.week}</th>${cols.map(c => `<th scope="col">${sortBtn(c.key, c.label, s)}</th>`).join("")}</tr></thead>
-      <tbody>${rows.map(r => `<tr><td class="sticky l"><span class="team-cell">${teamLogo(r.abbr)}<span><b>${esc(r.abbr)}</b> <span class="team-tag">${esc(r.name)}</span></span></span></td>
+      <tbody>${rows.map(r => `<tr><td class="sticky l"><span class="team-cell">${teamLogo(r.abbr)}<span><b>${teamUrl(r.abbr) ? `<a href="${teamUrl(r.abbr)}">${esc(r.abbr)}</a>` : esc(r.abbr)}</b> <span class="team-tag">${esc(r.name)}</span></span></span></td>
         <td>${r.opp ? `<span class="opp-cell">${teamLogo(r.opp, "sm")}<span>${r.away ? "@" : "vs "}${esc(r.opp)}<span class="kick">${esc(kickLabel(r.kick))}</span></span></span>` : `<span class="badge">BYE</span>`}</td>
         ${cols.map(c => cell(c, r[c.key])).join("")}</tr>`).join("")}</tbody>
     </table></div>
@@ -1247,11 +1261,11 @@ function fillPlayer(p) {
       <thead><tr>${logHead.map(h => `<th scope="col">${h}</th>`).join("")}</tr></thead>
       <tbody>${logRows.map(r => `<tr>${r.map(c => `<td>${esc(c ?? "—")}</td>`).join("")}</tr>`).join("")}</tbody>
     </table></div>
-    ${(D.news || []).some(n => (n.players || []).includes(p.id)) ? `<div class="section"><h3>Latest news</h3><div class="panel news-list">${(D.news || []).filter(n => (n.players || []).includes(p.id)).slice(0, 4).map(n => headlineRow(n, true)).join("")}</div></div>` : ""}
     <div class="pd-actions">
       <button type="button" class="btn primary" data-action="compare" data-id="${esc(p.id)}">Compare in Start / Sit</button>
       <button type="button" class="btn" data-action="roster" data-id="${esc(p.id)}">${onRoster ? "Remove from My Team" : "Add to My Team"}</button>
       <button type="button" class="btn" data-action="watch" data-id="${esc(p.id)}">${account.watch.has(p.id) ? "★ Watching" : "☆ Watch"}</button>
+      ${playerUrl(p) ? `<a class="btn" href="${playerUrl(p)}">Full player page →</a>` : ""}
     </div>
     <p class="muted" style="margin:0;font-size:12px">Season: ${f1(pts(p.ppg, f))} ${esc(fmtLabel())} pts/g over ${p.g} games, ${f1(pts(p.l3, f))} over the last ${Math.min(RECENT, p.g)}.</p>`;
 }
@@ -2039,10 +2053,8 @@ Object.assign(ACTIONS, {
     account.trades = account.trades.filter(x => x.id !== el.dataset.id); toast("Trade deleted"); render();
   },
 });
-// ================================================================== NEWS + BLOG
-// News: public RSS headlines collected by build.py (headline, source, short summary, link to the original).
-// Blog: posts stored in Supabase; anyone can read published posts, only admins can write.
-const news = { source: "all", q: "", mine: false };
+// ================================================================== BLOG
+// Posts stored in Supabase; anyone can read published posts, only admins can write.
 const blog = { posts: null, current: null, editing: null, list: null, preview: false };
 
 function timeAgo(iso) {
@@ -2065,23 +2077,17 @@ if (window.DOMPurify) window.DOMPurify.addHook("afterSanitizeAttributes", n => {
   if (n.tagName === "IMG") { n.setAttribute("loading", "lazy"); if (!n.getAttribute("alt")) n.setAttribute("alt", ""); }
 });
 
-function headlineRow(it, compact) {
-  const players = (it.players || []).map(id => byId.get(id)).filter(Boolean);
-  return `<article class="news-item${compact ? " compact" : ""}">
-    <div class="news-meta"><span class="news-src">${esc(it.source)}</span><span>${esc(timeAgo(it.time))}</span></div>
-    <h3 class="news-title"><a href="${esc(it.link)}" target="_blank" rel="noopener nofollow">${esc(it.title)}</a></h3>
-    ${!compact && it.summary ? `<p class="news-sum">${esc(it.summary)}</p>` : ""}
-    ${players.length ? `<div class="news-players">${players.map(p => `<button type="button" class="chip" data-pid="${esc(p.id)}">${esc(p.name)} <small>${p.pos} · ${esc(p.team)}</small></button>`).join("")}</div>` : ""}
-  </article>`;
-}
-
+// Supabase reads that the page waits on give up after a few seconds (then the built copy is used).
+const within = (promise, ms = 5000) => Promise.race([promise, new Promise((_, no) => setTimeout(() => no(new Error("timeout")), ms))]);
 async function loadPosts(force) {
   if (blog.posts && !force) return blog.posts;
   blog.posts = (D.posts || []).slice();
   if (sb) {
-    const { data, error } = await sb.from("posts").select("id,slug,title,excerpt,cover_url,tags,author_name,published_at,updated_at,status")
-      .eq("status", "published").order("published_at", { ascending: false }).limit(200);
-    if (!error && data) blog.posts = data;
+    try {
+      const { data, error } = await within(sb.from("posts").select("id,slug,title,excerpt,cover_url,tags,author_name,published_at,updated_at,status")
+        .eq("status", "published").order("published_at", { ascending: false }).limit(200));
+      if (!error && data) blog.posts = data;
+    } catch (e) { /* Supabase unreachable: keep the copy built into data.json */ }
   }
   return blog.posts;
 }
@@ -2091,34 +2097,6 @@ function postCard(p, big) {
     <span class="post-card-body"><span class="post-meta">${esc(fmtDate(p.published_at))}${p.author_name ? ` · ${esc(p.author_name)}` : ""}</span>
       <span class="post-card-title">${esc(p.title)}</span>${p.excerpt ? `<span class="post-card-ex">${esc(p.excerpt)}</span>` : ""}
       ${(p.tags || []).length ? `<span class="post-tags">${p.tags.map(t => `<span class="tag mid">${esc(t)}</span>`).join("")}</span>` : ""}</span></a>`;
-}
-
-// ---------------------------------------------------------------- news page
-function renderNews() {
-  const all = D.news || [];
-  const sources = [...new Set(all.map(i => i.source))];
-  const mineIds = new Set([...(roster().example ? [] : roster().ids), ...account.watch]);
-  const q = news.q.trim().toLowerCase();
-  const list = all.filter(i => (news.source === "all" || i.source === news.source)
-    && (!news.mine || (i.players || []).some(id => mineIds.has(id)))
-    && (!q || (i.title + " " + i.summary).toLowerCase().includes(q)));
-  $("#page").innerHTML = `
-    ${pageHead("News", "Fantasy football news", "The latest headlines from around the web, refreshed every few hours. Click a headline to read it at the source, or a player to see his numbers.")}
-    <section class="section" id="newsPosts"></section>
-    <div class="controls">
-      <div class="seg seg-wrap" role="group" aria-label="Source">${["all", ...sources].map(src => `<button type="button" data-action="newsSrc" data-v="${esc(src)}" aria-pressed="${news.source === src}">${src === "all" ? "All" : esc(src)}</button>`).join("")}</div>
-      <label class="check"><input id="newsMine" type="checkbox" ${news.mine ? "checked" : ""}> My players</label>
-      <input id="newsSearch" type="search" placeholder="Search headlines" aria-label="Search headlines" value="${esc(news.q)}">
-    </div>
-    ${news.mine && !mineIds.size ? `<div class="panel panel-pad">Add players to <a href="#my-team">My Team</a> or your watchlist to filter news to them.</div>` : ""}
-    <div class="panel news-list">${list.length ? list.map(i => headlineRow(i)).join("") : `<p class="empty">No headlines match.</p>`}</div>
-    <p class="method-link">Headlines and summaries belong to their publishers and link to the original articles. Sources: ${sources.map(esc).join(", ")}.</p>`;
-  loadPosts().then(posts => {
-    const box = $("#newsPosts"); if (!box || !posts.length) return;
-    box.innerHTML = `<div class="section-head"><h2>From The Sports Mattress</h2><a href="#blog">All articles →</a></div>
-      <div class="post-grid">${posts.slice(0, 3).map(p => postCard(p)).join("")}</div>`;
-    cleanLinks(box);
-  });
 }
 
 // ---------------------------------------------------------------- blog index + post
@@ -2140,8 +2118,8 @@ async function renderPost() {
   $("#page").innerHTML = `<p class="loading">Loading article…</p>`;
   let post = null;
   if (sb) {
-    const { data } = await sb.from("posts").select("*").eq("slug", slug).maybeSingle();
-    post = data;
+    try { const { data } = await within(sb.from("posts").select("*").eq("slug", slug).maybeSingle()); post = data; }
+    catch (e) { /* fall back to the built copy below */ }
   }
   if (!post) post = (D.posts || []).find(p => p.slug === slug) || null;
   if (state.page !== "post" || state.slug !== slug) return;
@@ -2166,14 +2144,22 @@ async function renderPost() {
         <a class="btn small" href="https://www.reddit.com/submit?url=${share}&title=${text}" target="_blank" rel="noopener">Reddit</a>
         <button type="button" class="btn small" data-action="copyLink" data-url="${esc(url)}">Copy link</button>
         ${account.isAdmin ? `<button type="button" class="btn small primary" data-action="editPost" data-id="${post.id}">Edit</button>` : ""}</div>
+      <section class="more-posts" id="morePosts" hidden></section>
     </article>`;
   cleanLinks($("#page"));
+  const others = (await loadPosts()).filter(p => p.slug !== slug).slice(0, 3);
+  const box = $("#morePosts");
+  if (box && others.length && state.slug === slug) {
+    box.innerHTML = `<div class="section-head"><h2>More articles</h2><a href="#blog">All articles →</a></div><div class="post-grid">${others.map(p => postCard(p)).join("")}</div>`;
+    box.hidden = false;
+    cleanLinks(box);
+  }
 }
 
 function renderNotFound() {
   $("#page").innerHTML = `${pageHead("404", "Page not found", "That page doesn't exist or has moved.")}
     <p><a class="btn primary" href="#home">Go to this week's matchups</a></p>
-    <p class="muted">Or try the <a href="#trade">Trade Analyzer</a>, <a href="#start-sit">Start / Sit</a> or the <a href="#news">latest news</a>.</p>`;
+    <p class="muted">Or try the <a href="#trade">Trade Analyzer</a>, <a href="#start-sit">Start / Sit</a> or the <a href="#blog">blog</a>.</p>`;
   cleanLinks($("#page"));
 }
 
@@ -2275,7 +2261,6 @@ function mdInsert(kind) {
 }
 
 Object.assign(ACTIONS, {
-  newsSrc: el => { news.source = el.dataset.v; render(); },
   copyLink: el => {
     const u = el.dataset.url;
     (navigator.clipboard ? navigator.clipboard.writeText(u) : Promise.reject()).then(() => toast("Link copied"), () => toast(u));
@@ -2332,7 +2317,5 @@ document.addEventListener("change", async e => {
 document.addEventListener("input", e => {
   if (e.target.id === "peTitle" && blog.editing && !blog.editing.id) { const s = $("#peSlug"); if (s && !s.dataset.touched) s.value = slugify(e.target.value); }
   if (e.target.id === "peSlug") e.target.dataset.touched = "1";
-  if (e.target.id === "newsSearch") { news.q = e.target.value; renderSoon(); }
-  if (e.target.id === "newsMine") { news.mine = e.target.checked; render(); }
 });
 })();

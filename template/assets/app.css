@@ -657,6 +657,8 @@ table.h2h tbody th { font: 600 13px/1.2 var(--body); color: var(--muted); backgr
 .post-body table { width: auto; border: 1px solid var(--line); font-size: 15px; display: block; max-width: 100%; overflow-x: auto; }
 .post-body code { background: var(--chip); padding: 1px 5px; border-radius: 4px; font-size: .9em; }
 .post-share { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; border-top: 1px solid var(--line); padding-top: 16px; }
+.more-posts { margin-top: 32px; }
+.more-posts ul { padding-left: 20px; }
 
 /* ------------------------------------------------------------------ editor */
 .editor { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 18px; align-items: start; }
@@ -677,3 +679,21 @@ table.h2h tbody th { font: 600 13px/1.2 var(--body); color: var(--muted); backgr
 .btn.danger-ghost { color: var(--bad); border-color: var(--line); }
 @media (max-width: 980px) { .editor { grid-template-columns: minmax(0, 1fr); } .editor-side { position: static; } .post-card.big { grid-template-columns: minmax(0, 1fr); } }
 .seg.seg-wrap { flex-wrap: wrap; max-width: 100%; }
+
+/* ------------------------------------------------------------------ player and team pages (pre-built) */
+.static-page { display: grid; gap: 18px; max-width: 900px; }
+.static-page h2 { font-size: 22px; margin-top: 8px; }
+.crumbs { font-size: 13px; color: var(--muted); display: flex; gap: 6px; flex-wrap: wrap; }
+.crumbs a { color: var(--muted); }
+.sp-head { display: flex; gap: 16px; align-items: center; }
+.sp-photo { width: 96px; height: 96px; border-radius: 50%; object-fit: cover; object-position: top; background: var(--chip); flex: none; }
+.sp-sub { margin: 6px 0 0; color: var(--muted); font-weight: 600; }
+.sp-summary { margin: 0; font-size: 17px; line-height: 1.7; max-width: 75ch; }
+.sp-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.sp-stats > div { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px; display: grid; gap: 4px; }
+.sp-stats span { font: 700 11px/1 var(--display); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.sp-stats b { font: 800 26px/1 var(--display); }
+.sp-list { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
+.sp-tools { color: var(--muted); }
+.static-page table th[scope="row"] { text-align: left; color: var(--muted); font-weight: 600; background: var(--surface); }
+@media (max-width: 560px) { .sp-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } .sp-photo { width: 72px; height: 72px; } }
