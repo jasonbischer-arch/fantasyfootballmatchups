@@ -141,7 +141,7 @@ def write_blog(folder: Path, out: Path, site_url: str, gtm_head: str = "", gtm_b
                             "logo": {"@type": "ImageObject", "url": f"{site_url}assets/icon-512.png"}}}
         head = '<script type="application/ld+json">' + json.dumps(ld, separators=(",", ":")).replace("</", "<\\/") + "</script>"
         body = (f'<article><p class="eyebrow">Blog</p><h1>{esc(p["title"])}</h1>'
-                f'<p class="meta">{p["date"].strftime("%B %-d, %Y")}' + (" · " + esc(", ".join(p["tags"][:3])) if p["tags"] else "")
+                f'<p class="meta">{p["date"].strftime("%B %-d, %Y")}' + (" · " + esc(", ".join(p["tags"])) if p["tags"] else "")
                 + f'</p><div class="post">{p["html"]}</div>{CTA}</article>')
         target = root / p["slug"] / "index.html"
         target.parent.mkdir(parents=True, exist_ok=True)
