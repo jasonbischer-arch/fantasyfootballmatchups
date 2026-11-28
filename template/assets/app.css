@@ -473,7 +473,7 @@ table.h2h tbody th { font: 600 13px/1.2 var(--body); color: var(--muted); backgr
 .auth-card { padding: 26px; display: grid; gap: 14px; }
 .auth-card h1 { font-size: clamp(32px, 5vw, 44px); }
 .auth-form { display: grid; gap: 12px; }
-.auth-form .field input, .settings-form input, .settings-form select, .inline-prompt input, .danger input {
+.auth-form .field input, .settings-form input, .settings-form select, .inline-prompt input, .danger input, .sl-form input {
   font: 500 16px/1.2 var(--body); padding: 11px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); width: 100%; max-width: none; }
 .auth-form .field small { font-size: 12px; }
 .btn.wide { width: 100%; justify-content: center; padding: 13px; font-size: 15px; }
@@ -705,3 +705,26 @@ table.h2h tbody th { font: 600 13px/1.2 var(--body); color: var(--muted); backgr
 .sp-tools { color: var(--muted); }
 .static-page table th[scope="row"] { text-align: left; color: var(--muted); font-weight: 600; background: var(--surface); }
 @media (max-width: 560px) { .sp-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } .sp-photo { width: 72px; height: 72px; } }
+
+/* Sleeper import */
+.badge.sleeper { background: #1b2a3d; color: #7ff0d4; }
+.sl-box { display: grid; gap: 12px; }
+.sl-linked { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.sl-linked .sl-hint { flex-basis: 100%; }
+.sl-details > summary { cursor: pointer; font-weight: 700; display: flex; align-items: center; gap: 8px; list-style: none; }
+.sl-details > summary::-webkit-details-marker { display: none; }
+.sl-details > summary::after { content: "▾"; color: var(--muted); margin-left: auto; }
+.sl-details:not([open]) > summary::after { content: "▸"; }
+.sl-details[open] > summary { margin-bottom: 12px; }
+.sl-logo { width: 26px; height: 26px; border-radius: 7px; background: #1b2a3d; color: #7ff0d4; display: inline-grid; place-items: center; font: 800 15px/1 var(--display); flex: none; }
+.sl-form { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
+.sl-form .field { flex: 1 1 220px; }
+.sl-note { margin: 8px 0 0; font-size: 13px; }
+.sl-leagues { display: grid; gap: 8px; margin-top: 12px; justify-items: start; }
+.sl-league { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.sl-league img, .sl-av { width: 36px; height: 36px; border-radius: 8px; flex: none; object-fit: cover; }
+.sl-av { display: grid; place-items: center; background: var(--chip); font: 800 16px/1 var(--display); }
+.sl-league .meta { display: grid; gap: 2px; min-width: 0; flex: 1; }
+.sl-league .meta b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sl-partner { margin-top: 4px; }
+.sl-partner select { max-width: 100%; }

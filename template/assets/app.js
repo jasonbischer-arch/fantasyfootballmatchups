@@ -236,7 +236,7 @@ function boot() {
   page.addEventListener("click", onClick);
   page.addEventListener("input", onInput);
   page.addEventListener("change", onInput);
-  page.addEventListener("submit", e => { e.preventDefault(); onAuthSubmit(e); onSettingsSubmit(e); });
+  page.addEventListener("submit", e => { e.preventDefault(); onAuthSubmit(e); onSettingsSubmit(e); onSleeperSubmit(e); });
   $("#playerDialog").addEventListener("click", e => {
     if (e.target.id === "playerDialog") return closePlayer();
     onClick(e);
@@ -438,6 +438,7 @@ function onInput(e) {
     return render();
   }
   if (t.id === "teamPick" && e.type === "change") { setActiveTeam(t.value); return; }
+  if (t.id === "tradePartner" && e.type === "change") { store.set("tsm-trade-partner", t.value); return render(); }
   if (t.id === "tradeGive" || t.id === "tradeGet") {
     const p = byLabel.get(t.value.trim().toLowerCase());
     if (p) tradeAdd(t.id === "tradeGive" ? "give" : "get", p);
@@ -465,7 +466,7 @@ const ACTIONS = {
     render();
   },
   rmroster(el) { removeFromRoster(el.dataset.id); render(); },
-  clearroster() { setRosterIds([]); render(); },
+  clearroster() { if (!signedIn()) store.set("tsm-sleeper", null); setRosterIds([]); render(); },
   keepexample() { setRosterIds(exampleRoster().map(p => p.id)); render(); },
   addroster() { const el = $("#mtAdd"); const p = el && byLabel.get(el.value.trim().toLowerCase()); if (p) addToRoster(p); },
   tadd(el) { const p = byId.get(el.dataset.id); if (p) tradeAdd(el.dataset.side, p); },
@@ -959,7 +960,22 @@ const SLOT_SETS = {
   flex2: { label: "QB, 2 RB, 2 WR, TE, 2 FLEX", slots: ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "FLEX"] },
   sf: { label: "Superflex: QB, 2 RB, 2 WR, TE, FLEX, SFLEX", slots: ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "SFLEX"] },
 };
-const ELIGIBLE = { QB: ["QB"], RB: ["RB"], WR: ["WR"], TE: ["TE"], FLEX: ["RB", "WR", "TE"], SFLEX: ["QB", "RB", "WR", "TE"] };
+const ELIGIBLE = { QB: ["QB"], RB: ["RB"], WR: ["WR"], TE: ["TE"], FLEX: ["RB", "WR", "TE"], SFLEX: ["QB", "RB", "WR", "TE"],
+  WRRB: ["RB", "WR"], REC: ["WR", "TE"] };
+const SLOT_TAG = { WRRB: "W/R", REC: "W/T", SFLEX: "SF" };
+const SLOT_NAME = { FLEX: "FLEX", SFLEX: "Superflex", WRRB: "RB/WR flex", REC: "WR/TE flex" };
+// A lineup format: one of SLOT_SETS, or "c:QB,RB,..." copied from a Sleeper league.
+function slotSet(key) {
+  if (SLOT_SETS[key]) return SLOT_SETS[key];
+  if (typeof key === "string" && key.startsWith("c:")) {
+    const slots = key.slice(2).split(",").filter(x => ELIGIBLE[x]);
+    if (slots.length) {
+      const n = {}; slots.forEach(x => { n[x] = (n[x] || 0) + 1; });
+      return { label: Object.entries(n).map(([x, c]) => `${c > 1 ? c + " " : ""}${SLOT_NAME[x] || x}`).join(", "), slots, custom: true };
+    }
+  }
+  return SLOT_SETS.standard;
+}
 
 function exampleRoster() {
   const pick = (pos, idxs) => { const l = D.players.filter(p => p.pos === pos && p.g >= 4 && !unavailable(p) && playedRecently(p)); return idxs.map(i => l[i]).filter(Boolean); };
@@ -1009,10 +1025,10 @@ function optimize(players, slots) {
   return { lineup, bench };
 }
 function rosterRow(slot, x, removable) {
-  if (!x || !x.p) return `<div class="slot empty-slot"><span class="slot-tag">${slot}</span><span>Empty. Add a player to fill this spot.</span><span></span><span></span></div>`;
+  if (!x || !x.p) return `<div class="slot empty-slot"><span class="slot-tag">${SLOT_TAG[slot] || slot}</span><span>Empty. Add a player to fill this spot.</span><span></span><span></span></div>`;
   const p = x.p, d = defFor(p), f = state.fmt;
   return `<div class="slot">
-    <span class="slot-tag">${slot}</span>
+    <span class="slot-tag">${SLOT_TAG[slot] || slot}</span>
     <div class="pcell">${avatar(p)}<span class="meta"><span>${plink(p)} ${injBadge(p)}</span>
       <small class="pline">${p.pos} · ${teamLogo(p.team, "sm")}${esc(p.team)} ${p.bye ? "· BYE" : `${p.away ? "@" : "vs"} ${teamLogo(p.opp, "sm")}${esc(p.opp)} · ${esc(kickLabel(p.kick))}`}</small></span></div>
     <span>${d ? rankChip(d.rank[f], `Matchup rank vs ${p.pos}`) : ""}</span>
@@ -1022,22 +1038,23 @@ function rosterRow(slot, x, removable) {
 function renderMyTeam() {
   const r = roster();
   const setKey = r.cloud ? (r.team ? r.team.lineup_format : "standard") : store.get("tsm-slots", "standard");
-  const set = SLOT_SETS[setKey] || SLOT_SETS.standard;
+  const set = slotSet(setKey);
   const players = r.ids.map(id => byId.get(id)).filter(Boolean);
   const { lineup, bench } = optimize(players, set.slots);
   const total = lineup.reduce((s, x) => s + (x.p && !unavailable(x.p) ? x.proj : 0), 0);
-  const warnings = lineup.filter(x => x.p && unavailable(x.p)).map(x => `${x.p.name} is ${unavailable(x.p)}, and you don't have another ${x.slot === "FLEX" ? "flex-eligible player" : x.slot} to replace him.`);
+  const warnings = lineup.filter(x => x.p && unavailable(x.p)).map(x => `${x.p.name} is ${unavailable(x.p)}, and you don't have another ${ELIGIBLE[x.slot].length > 1 ? "player who can fill " + (SLOT_NAME[x.slot] || x.slot) : x.slot} to replace him.`);
 
   $("#page").innerHTML = `
     ${offseason() ? offseasonNotice("This week's lineup") : ""}
     ${pageHead(offseason() ? `${D.season} season · final` : `Week ${D.week} · ${esc(fmtLabel())}`, r.cloud && r.team ? esc(r.team.name) : "My Team", r.cloud
       ? "Your roster is saved to your account. Here's this week's best lineup, ranked by matchup-adjusted projection."
       : "Add your roster and get this week's best lineup, ranked by matchup-adjusted projection.")}
+    ${sleeperBox("my-team")}
     ${r.cloud ? teamSwitcher() : sb ? `<div class="panel panel-pad save-cta"><span><strong>Save your team.</strong> <span class="muted">Right now it's only in this browser. Create a free account to keep it, add more teams and use it on any device.</span></span><span style="display:flex;gap:8px"><a class="btn small" href="#login">Log in</a><a class="btn small primary" href="#signup">Create account</a></span></div>` : ""}
     <div class="panel panel-pad addbar">
       <div class="field" style="flex:1 1 260px"><label for="mtAdd">Add a player</label><input id="mtAdd" type="search" list="playerList" placeholder="Type a name and pick from the list" autocomplete="off"></div>
       <button type="button" class="btn primary" data-action="addroster">Add</button>
-      <div class="field"><label for="mtSlots">Lineup</label><select id="mtSlots">${Object.entries(SLOT_SETS).map(([k, v]) => `<option value="${k}"${k === setKey ? " selected" : ""}>${esc(v.label)}</option>`).join("")}</select></div>
+      <div class="field"><label for="mtSlots">Lineup</label><select id="mtSlots">${set.custom ? `<option value="${esc(setKey)}" selected>League: ${esc(set.label)}</option>` : ""}${Object.entries(SLOT_SETS).map(([k, v]) => `<option value="${k}"${k === setKey ? " selected" : ""}>${esc(v.label)}</option>`).join("")}</select></div>
       ${players.length ? `<button type="button" class="btn" data-action="clearroster">Clear roster</button>` : ""}
     </div>
     ${r.example ? `<div class="panel panel-pad" style="display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap">
@@ -1055,6 +1072,7 @@ function renderMyTeam() {
       </div>
     </section>
     ${methodLink("lineup picks")}`;
+  sleeperAutoSync();
 }
 
 // ------------------------------------------------------------------ PLAYERS
@@ -1475,6 +1493,7 @@ function renderTrade() {
         <button type="button" class="x" data-action="trm" data-side="${side}" data-id="${esc(p.id)}" aria-label="Remove ${esc(p.name)}">×</button></div>`; }).join("") || `<p class="empty" style="padding:18px">Add the players you'd ${side === "give" ? "send away" : "receive"}.</p>`}</div>
       <div class="field"><label for="${side === "give" ? "tradeGive" : "tradeGet"}">Add a player</label>
         <input id="${side === "give" ? "tradeGive" : "tradeGet"}" type="search" list="playerList" placeholder="Type a name and pick from the list" autocomplete="off"></div>
+      ${side === "get" ? partnerChips(t) : ""}
       ${side === "give" && rosterIds.length ? `<div class="roster-chips"><span class="muted">From My Team:</span>${rosterIds.map(id => byId.get(id)).filter(p => p && !t.give.includes(p.id)).slice(0, 14).map(p => `<button type="button" class="chip" data-action="tadd" data-side="give" data-id="${esc(p.id)}">${esc(lastName(p.name))} <small>${p.pos}</small></button>`).join("")}</div>` : ""}
     </div>`;
 
@@ -1684,6 +1703,7 @@ function renderPrivacy() {
     ["Without an account", `<p>Everything you enter (your roster, Start / Sit picks, trades and scoring format) is saved only in your browser's local storage. It stays on your device and isn't sent to us. Clearing your browser data removes it.</p>`],
     ["With an account", `<p>If you create an account we store your <strong>email address</strong>, an optional <strong>display name</strong>, your <strong>password</strong> (as a secure hash we can't read), and what you choose to save: <strong>teams, saved trades, watchlist and settings</strong> (scoring format, league size, superflex). This is used only to run your account. We don't sell it or share it.</p>
       <p>Account data is stored with <a href="https://supabase.com/" target="_blank" rel="noopener">Supabase</a> in the United States. Each account can only read and change its own data. You stay logged in on a device until you log out.</p>`],
+    ["Sleeper import", `<p>If you import a team from <a href="https://sleeper.com/" target="_blank" rel="noopener">Sleeper</a>, your browser asks Sleeper's public API for your username's leagues and rosters. We never ask for or see your Sleeper password, and we can't change anything in your Sleeper leagues. With an account we save your Sleeper username and the imported rosters so they stay in sync.</p>`],
     ["Deleting your data", `<p>Delete your account any time from <a href="#account">Your Account</a>. That permanently removes your login and everything saved to it.</p>`],
     ["Emails", `<p>We only email you for account tasks you start, like confirming your address or resetting your password. No newsletters or marketing.</p>`],
     ["Analytics", `<p>We use Google Analytics, through Google Tag Manager, to count visits and see which pages and tools people use. It uses cookies and collects standard information such as pages viewed, approximate location, device and browser. We don't send it your email, roster or anything you type. Analytics cookies are only used if you allow them: visitors in the EU, UK and Switzerland are asked first, and anyone can accept or reject them in <button type="button" class="link-btn" data-cookie-settings>cookie settings</button> (also linked at the bottom of every page). You can also use Google's <a href="https://tools.google.com/dlpage/gaoptout" target="_blank" rel="noopener">opt-out add-on</a>. We never use advertising cookies.</p>`],
@@ -1806,6 +1826,232 @@ function renderAcct() {
   cleanLinks($("#navAcct"));
 }
 
+
+// ---------------------------------------------------------------- Sleeper import
+// Sleeper's public API (read-only, no login, allows browser requests). Rosters are matched to our players by
+// Sleeper player ID ("sl" in data.json, matched at build time).
+const SLEEPER = "https://api.sleeper.app/v1";
+const sl = { user: null, leagues: null, busy: false, error: "", leagueData: new Map(), syncing: new Set(), synced: new Set() };
+let bySl = null;
+function slPlayer(id) {
+  if (!bySl) { bySl = new Map(); D.players.forEach(p => { if (p.sl) bySl.set(String(p.sl), p); }); }
+  return bySl.get(String(id));
+}
+async function slGet(path) {
+  const r = await within(fetch(SLEEPER + path), 12000);
+  if (!r.ok) throw new Error("sleeper-down");
+  return r.json();
+}
+function slError(e) {
+  return e && e.message && !/sleeper-down|timeout|fetch|network/i.test(e.message) ? e.message : "Sleeper didn't respond. Try again in a minute.";
+}
+function slUsername() {
+  return (account.profile && account.profile.sleeper_username) || store.get("tsm-sleeper-user", "") || "";
+}
+// Sleeper's lineup slots -> ours. Kickers, defenses, IDP and bench aren't projected here.
+const SL_SLOT = { QB: "QB", RB: "RB", WR: "WR", TE: "TE", FLEX: "FLEX", SUPER_FLEX: "SFLEX", WRRB_FLEX: "WRRB", REC_FLEX: "REC" };
+function leagueFormat(lg) {
+  const slots = (lg.roster_positions || []).map(x => SL_SLOT[x]).filter(Boolean).slice(0, 20);
+  if (!slots.length) return "standard";
+  const preset = Object.entries(SLOT_SETS).find(([, v]) => v.slots.slice().sort().join() === slots.slice().sort().join());
+  return preset ? preset[0] : "c:" + slots.join(",");
+}
+function leagueScoring(lg) { const r = (lg.scoring_settings || {}).rec; return r == null || r >= 1 ? "ppr" : r >= 0.5 ? "half" : "std"; }
+function leagueSf(lg) { const s = slotSet(leagueFormat(lg)).slots; return s.includes("SFLEX") || s.filter(x => x === "QB").length > 1; }
+function leagueSummary(lg) {
+  return `${lg.total_rosters || "?"} teams · ${D.formats[leagueScoring(lg)]}${leagueSf(lg) ? " · Superflex" : ""}${lg.settings && lg.settings.type === 2 ? " · Dynasty" : lg.settings && lg.settings.type === 1 ? " · Keeper" : ""}`;
+}
+// Players on a Sleeper roster that we track, plus how many we skipped (kickers, defenses, deep reserves).
+function mapSleeper(ids) {
+  const got = [];
+  let missed = 0;
+  (ids || []).forEach(id => { const p = slPlayer(id); if (p) { if (!got.includes(p.id)) got.push(p.id); } else missed++; });
+  return { ids: got.slice(0, 40), missed };
+}
+async function sleeperFind(username) {
+  username = String(username || "").trim().replace(/^@/, "");
+  if (!username) { sl.error = "Enter your Sleeper username."; return render(); }
+  Object.assign(sl, { busy: true, error: "", leagues: null }); render();
+  try {
+    const user = await slGet("/user/" + encodeURIComponent(username));
+    if (!user || !user.user_id) throw new Error(`We couldn't find a Sleeper user named “${username}”. Use your username (in the Sleeper app: Settings → Profile), not your display name.`);
+    let season = String(D.season);
+    try { const st = await slGet("/state/nfl"); season = String(st.league_season || st.season || season); } catch (e) { /* use ours */ }
+    let leagues = (await slGet(`/user/${user.user_id}/leagues/nfl/${season}`)) || [];
+    if (!leagues.length && season !== String(D.season)) leagues = (await slGet(`/user/${user.user_id}/leagues/nfl/${D.season}`)) || [];
+    sl.user = user; sl.leagues = leagues;
+    store.set("tsm-sleeper-user", user.username || username);
+    if (signedIn() && account.profile && (account.profile.sleeper_user_id !== user.user_id || account.profile.sleeper_username !== (user.username || username)))
+      saveProfile({ sleeper_username: (user.username || username).slice(0, 40), sleeper_user_id: user.user_id }, "");
+    if (!leagues.length) sl.error = `No NFL leagues for ${user.display_name || username} this season.`;
+  } catch (e) { sl.error = slError(e); }
+  sl.busy = false; render();
+}
+async function sleeperRosterFor(leagueId, userId, rosterId) {
+  const rosters = (await slGet(`/league/${leagueId}/rosters`)) || [];
+  const r = rosters.find(x => (rosterId != null && x.roster_id === rosterId)) ||
+            rosters.find(x => x.owner_id === userId || (x.co_owners || []).includes(userId));
+  if (!r) throw new Error("You don't have a team in that league.");
+  return r;
+}
+// Import one league's roster: a saved team when signed in (updated in place if already imported), else this browser's roster.
+async function sleeperImport(lg, opts = {}) {
+  const r = await sleeperRosterFor(lg.league_id, sl.user.user_id);
+  const { ids, missed } = mapSleeper(r.players);
+  const fmt = leagueFormat(lg), name = String(lg.name || "").trim().slice(0, 40).trim() || "Sleeper team";
+  if (signedIn() && account.loaded) {
+    let t = account.teams.find(x => x.sleeper_league_id === lg.league_id);
+    const row = { name: t ? t.name : name, player_ids: ids, lineup_format: fmt, sleeper_league_id: lg.league_id,
+                  sleeper_roster_id: r.roster_id, sleeper_synced_at: new Date().toISOString() };
+    if (t) {
+      const { error } = await sb.from("teams").update(row).eq("id", t.id);
+      if (error) throw new Error(friendlyError(error));
+      Object.assign(t, row);
+    } else {
+      const { data, error } = await sb.from("teams").insert(row).select().single();
+      if (error) throw new Error(friendlyError(error));
+      account.teams.push(data); t = data;
+    }
+    if (!opts.keepActive) await setActiveTeam(t.id, true);
+  } else {
+    store.set("tsm-roster", ids); store.set("tsm-slots", fmt);
+    store.set("tsm-sleeper", { league_id: lg.league_id, roster_id: r.roster_id, user_id: sl.user.user_id, name, synced: Date.now() });
+  }
+  sl.synced.add(lg.league_id);
+  return { ids, missed, name };
+}
+// Use the league's scoring, size and superflex setting across the site.
+async function applyLeagueSettings(lg) {
+  const fmt = leagueScoring(lg), size = Math.min(20, Math.max(6, lg.total_rosters || 12)), sf = leagueSf(lg);
+  state.fmt = fmt; store.set("tsm-fmt", fmt);
+  if (signedIn() && account.profile) await saveProfile({ scoring: fmt, league_size: size, superflex: sf }, "");
+  else store.set("tsm-league", { size, sf });
+  clearSettingsCaches();
+}
+function linkedLeague() {
+  // The Sleeper league behind the current roster, if any: { league_id, roster_id, name, team? }.
+  if (signedIn() && account.loaded) {
+    const t = activeTeam();
+    return t && t.sleeper_league_id ? { league_id: t.sleeper_league_id, roster_id: t.sleeper_roster_id, name: t.name, team: t, synced: t.sleeper_synced_at } : null;
+  }
+  const l = store.get("tsm-sleeper", null);
+  return l && l.league_id ? { ...l, synced: l.synced } : null;
+}
+// Pull the latest roster (waivers, trades) for a linked team. Quiet unless something changed.
+async function sleeperSync(force) {
+  const L = linkedLeague();
+  if (!L || sl.syncing.has(L.league_id)) return;
+  const age = Date.now() - new Date(L.synced || 0).getTime();
+  if (!force && (sl.synced.has(L.league_id) || age < 15 * 60 * 1000)) return;
+  sl.syncing.add(L.league_id); if (force) render();
+  try {
+    const r = await sleeperRosterFor(L.league_id, L.user_id || (account.profile && account.profile.sleeper_user_id), L.roster_id);
+    const { ids } = mapSleeper(r.players);
+    const now = new Date().toISOString();
+    const before = roster().ids.slice().sort().join();
+    if (L.team) {
+      Object.assign(L.team, { player_ids: ids, sleeper_synced_at: now });
+      await sb.from("teams").update({ player_ids: ids, sleeper_synced_at: now }).eq("id", L.team.id);
+    } else {
+      store.set("tsm-roster", ids); store.set("tsm-sleeper", { ...store.get("tsm-sleeper", {}), synced: Date.now() });
+    }
+    sl.synced.add(L.league_id);
+    if (force || before !== ids.slice().sort().join()) toast(before !== ids.slice().sort().join() ? "Roster updated from Sleeper" : "Already up to date with Sleeper");
+  } catch (e) { if (force) toast(slError(e), "bad"); }
+  sl.syncing.delete(L.league_id);
+  if (["my-team", "trade", "account"].includes(state.page)) render();
+}
+function sleeperAutoSync() { if (linkedLeague()) setTimeout(() => sleeperSync(false), 0); }
+
+function sleeperBox(where) {
+  const L = linkedLeague();
+  const imported = id => (signedIn() && account.loaded ? account.teams.some(t => t.sleeper_league_id === id) : (store.get("tsm-sleeper", {}) || {}).league_id === id);
+  const list = sl.leagues && sl.leagues.length ? `<div class="sl-leagues">${sl.leagues.map(lg => `<div class="sl-league">
+      ${lg.avatar ? `<img src="https://sleepercdn.com/avatars/thumbs/${esc(lg.avatar)}" alt="" width="36" height="36" loading="lazy">` : `<span class="sl-av" aria-hidden="true">${esc((lg.name || "?").slice(0, 1))}</span>`}
+      <div class="meta"><b>${esc(String(lg.name || "").trim() || "League")}</b><small class="muted">${esc(leagueSummary(lg))}</small></div>
+      <button type="button" class="btn small ${imported(lg.league_id) ? "" : "primary"}" data-action="slImport" data-id="${esc(lg.league_id)}">${imported(lg.league_id) ? "Re-import" : "Import"}</button></div>`).join("")}
+    ${signedIn() && sl.leagues.length > 1 ? `<button type="button" class="btn small" data-action="slImportAll">Import all ${sl.leagues.length} leagues</button>` : ""}
+    ${!signedIn() && sb ? `<p class="muted sl-note">Importing replaces the roster saved in this browser. <a href="#signup">Create a free account</a> to keep every league as its own team and sync them automatically.</p>` : ""}</div>` : "";
+  const linked = L && where === "my-team" ? `<div class="sl-linked"><span class="badge sleeper">Sleeper</span>
+      <span>Synced with <b>${esc(L.name)}</b>${L.synced ? ` <span class="muted">· ${esc(timeAgo(new Date(L.synced).toISOString()))}</span>` : ""}</span>
+      <button type="button" class="btn small" data-action="slSync" ${sl.syncing.has(L.league_id) ? "disabled" : ""}>${sl.syncing.has(L.league_id) ? "Syncing…" : "Sync now"}</button>
+      <button type="button" class="link-btn" data-action="slUnlink">Unlink</button>
+      <small class="muted sl-hint">Roster moves in Sleeper show up here automatically. To edit by hand, unlink first.</small></div>` : "";
+  const open = where === "account" || !L || sl.leagues;
+  return `<div class="panel panel-pad sl-box">
+    ${linked}
+    <details class="sl-details"${open ? " open" : ""}><summary><span class="sl-logo" aria-hidden="true">S</span> ${L && where === "my-team" ? "Import another Sleeper league" : "Import your team from Sleeper"}</summary>
+      <form id="slForm" class="sl-form" novalidate>
+        <div class="field"><label for="slUser">Sleeper username</label><input id="slUser" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="40" placeholder="e.g. fantasyking22" value="${esc(sl.user ? sl.user.username || "" : slUsername())}"></div>
+        <button type="submit" class="btn primary" ${sl.busy ? "disabled" : ""}>${sl.busy ? "Looking…" : "Find my leagues"}</button>
+      </form>
+      <p class="muted sl-note">No password needed. We only read your public leagues and rosters.</p>
+      ${sl.error ? `<p class="auth-msg bad" role="alert">${esc(sl.error)}</p>` : ""}
+      ${list}
+    </details></div>`;
+}
+function onSleeperSubmit(e) {
+  if (e.target.id !== "slForm") return;
+  sleeperFind($("#slUser").value);
+}
+
+// Trade Analyzer: players on a league-mate's roster.
+async function leagueData(leagueId) {
+  if (sl.leagueData.has(leagueId)) return sl.leagueData.get(leagueId);
+  sl.leagueData.set(leagueId, null);   // loading
+  try {
+    const [rosters, users] = await Promise.all([slGet(`/league/${leagueId}/rosters`), slGet(`/league/${leagueId}/users`)]);
+    const names = new Map((users || []).map(u => [u.user_id, String((u.metadata && u.metadata.team_name) || u.display_name || "").trim() || "Team"]));
+    sl.leagueData.set(leagueId, (rosters || []).map(r => ({ roster_id: r.roster_id, name: names.get(r.owner_id) || `Team ${r.roster_id}`, ids: mapSleeper(r.players).ids })));
+  } catch (e) { sl.leagueData.set(leagueId, []); }
+  if (state.page === "trade") render();
+  return sl.leagueData.get(leagueId);
+}
+function partnerChips(t) {
+  const L = linkedLeague();
+  if (!L) return "";
+  const data = sl.leagueData.get(L.league_id);
+  if (data === undefined) { leagueData(L.league_id); return `<p class="muted roster-chips">Loading your Sleeper league…</p>`; }
+  if (!data || !data.length) return "";
+  const others = data.filter(r => r.roster_id !== L.roster_id && r.ids.length);
+  const pick = others.find(r => String(r.roster_id) === String(store.get("tsm-trade-partner", ""))) || null;
+  return `<div class="field sl-partner"><label for="tradePartner">Trade partner in ${esc(L.name)}</label>
+      <select id="tradePartner"><option value="">Pick a team…</option>${others.map(r => `<option value="${r.roster_id}"${pick && pick.roster_id === r.roster_id ? " selected" : ""}>${esc(r.name)}</option>`).join("")}</select></div>
+    ${pick ? `<div class="roster-chips"><span class="muted">From ${esc(pick.name)}:</span>${pick.ids.map(id => byId.get(id)).filter(p => p && !t.get.includes(p.id))
+      .sort((a, b) => b.ppg.ppr - a.ppg.ppr).slice(0, 18).map(p => `<button type="button" class="chip" data-action="tadd" data-side="get" data-id="${esc(p.id)}">${esc(lastName(p.name))} <small>${p.pos}</small></button>`).join("")}</div>` : ""}`;
+}
+
+Object.assign(ACTIONS, {
+  slImport: async el => {
+    const lg = (sl.leagues || []).find(x => x.league_id === el.dataset.id); if (!lg) return;
+    el.disabled = true; el.textContent = "Importing…";
+    try {
+      const res = await sleeperImport(lg);
+      await applyLeagueSettings(lg);
+      toast(`Imported ${res.ids.length} players from “${res.name}”${res.missed ? ` (${res.missed} kickers, defenses or deep reserves skipped)` : ""}. Scoring set to ${D.formats[leagueScoring(lg)]}.`);
+      sl.leagues = null; navigate("my-team"); render();
+    } catch (e) { toast(slError(e), "bad"); render(); }
+  },
+  slImportAll: async el => {
+    el.disabled = true; el.textContent = "Importing…";
+    let n = 0;
+    for (const lg of sl.leagues || []) { try { await sleeperImport(lg, { keepActive: n > 0 }); n++; } catch (e) { toast(`${lg.name}: ${slError(e)}`, "bad"); } }
+    if (sl.leagues && sl.leagues[0]) await applyLeagueSettings(sl.leagues[0]);
+    toast(`Imported ${n} league${n === 1 ? "" : "s"} from Sleeper. Switch between them on My Team.`);
+    sl.leagues = null; navigate("my-team"); render();
+  },
+  slSync: () => sleeperSync(true),
+  slUnlink: async () => {
+    const L = linkedLeague(); if (!L) return;
+    if (L.team) {
+      const { error } = await sb.from("teams").update({ sleeper_league_id: null, sleeper_roster_id: null }).eq("id", L.team.id);
+      if (error) return toast(friendlyError(error), "bad");
+      Object.assign(L.team, { sleeper_league_id: null, sleeper_roster_id: null });
+    } else store.set("tsm-sleeper", null);
+    toast("Unlinked from Sleeper. The roster stays, and you can edit it by hand."); render();
+  },
+});
+
 // ---------------------------------------------------------------- saved data helpers
 function activeTeam() { return account.teams.find(t => t.id === account.activeTeamId) || account.teams[0] || null; }
 let teamSaveTimer = 0;
@@ -1852,7 +2098,8 @@ async function toggleWatch(id) {
 // League settings shape the Trade Analyzer's replacement levels.
 function leagueSettings() {
   if (account.profile) return { size: account.profile.league_size || 12, sf: !!account.profile.superflex };
-  return { size: 12, sf: false };
+  const l = store.get("tsm-league", null);
+  return l ? { size: l.size || 12, sf: !!l.sf } : { size: 12, sf: false };
 }
 function replRank(pos) {
   const { size, sf } = leagueSettings();
@@ -1965,7 +2212,7 @@ function renderAccount() {
   if (!account.loaded) { $("#page").innerHTML = `<p class="loading">Loading your account…</p>`; return; }
   const pr = account.profile, ls = leagueSettings();
   const teamRows = account.teams.map(t => `<div class="list-row">
-      <div><b>${esc(t.name)}</b>${t.id === account.activeTeamId ? ` <span class="badge ok">Active</span>` : ""}<small class="muted" style="display:block">${t.player_ids.length} players · ${esc((SLOT_SETS[t.lineup_format] || SLOT_SETS.standard).label)}</small></div>
+      <div><b>${esc(t.name)}</b>${t.id === account.activeTeamId ? ` <span class="badge ok">Active</span>` : ""}<small class="muted" style="display:block">${t.player_ids.length} players · ${esc(slotSet(t.lineup_format).label)}${t.sleeper_league_id ? ` · <span class="badge sleeper">Sleeper</span>` : ""}</small></div>
       <div class="row-actions"><button type="button" class="btn small" data-action="acctOpenTeam" data-id="${t.id}">Open</button>
         <button type="button" class="btn small" data-action="teamDelete" data-id="${t.id}">Delete</button></div></div>`).join("");
   const tradeRows = account.trades.map(t => `<div class="list-row">
@@ -1990,6 +2237,8 @@ function renderAccount() {
           <p class="muted" style="margin:0;font-size:12px">League size and quarterbacks set how the Trade Analyzer values each position.</p>
           <button type="submit" class="btn primary">Save settings</button>
         </form>
+        <div class="section-head"><h2>Connected accounts</h2></div>
+        ${sleeperBox("account")}
         <div class="section-head"><h2>Account</h2></div>
         <div class="panel panel-pad acct-actions">
           ${account.isAdmin ? `<a class="btn primary" href="#write">Write a blog post</a>` : ""}
@@ -2083,6 +2332,7 @@ const blog = { posts: null, current: null, editing: null, list: null, preview: f
 
 function timeAgo(iso) {
   const s = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (s < 60) return "just now";
   if (s < 3600) return `${Math.max(1, Math.round(s / 60))}m ago`;
   if (s < 86400) return `${Math.round(s / 3600)}h ago`;
   return `${Math.round(s / 86400)}d ago`;

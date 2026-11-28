@@ -431,6 +431,55 @@ def write_feed(posts: list[dict]) -> None:
         + items + "</channel></rss>\n")
 
 
+# --------------------------------------------------------------------------- Sleeper player IDs
+SLEEPER_PLAYERS_URL = "https://api.sleeper.app/v1/players/nfl"   # Sleeper asks for at most one call a day
+
+
+def _name_key(n: str) -> str:
+    import re as _re
+    import unicodedata
+    n = unicodedata.normalize("NFKD", n).encode("ascii", "ignore").decode().lower()
+    n = _re.sub(r"[.'’\-]", "", n)
+    n = _re.sub(r"\b(jr|sr|ii|iii|iv|v)\b", "", n)
+    return _re.sub(r"\s+", " ", n).strip()
+
+
+def assign_sleeper_ids(data: dict) -> None:
+    """Give each player his Sleeper ID ("sl") so Sleeper rosters can be imported in the browser.
+
+    Matched by GSIS ID when Sleeper has it, then by name + position (+ team), then by last name + team + position
+    (nicknames such as Josh/Joshua). Never fails the build: without Sleeper, imports just aren't available.
+    """
+    try:
+        sl = json.loads(fetch(SLEEPER_PLAYERS_URL, "sleeper_players.json", max_age_hours=20).read_text())
+    except Exception as e:
+        print(f"  Sleeper players unavailable: {e}", file=sys.stderr)
+        return
+    by_gsis, by_npt, by_np, by_ltp = {}, {}, {}, {}
+    for k, x in sl.items():
+        if x.get("position") not in ("QB", "RB", "WR", "TE") or not x.get("full_name"):
+            continue
+        if (x.get("gsis_id") or "").strip():
+            by_gsis[x["gsis_id"].strip()] = k
+        nk = _name_key(x["full_name"])
+        by_npt.setdefault((nk, x["position"], x.get("team")), []).append(k)
+        by_np.setdefault((nk, x["position"]), []).append(k)
+        by_ltp.setdefault((nk.split()[-1] if nk else "", x.get("team"), x["position"]), []).append(k)
+    got = 0
+    for p in data["players"]:
+        nk = _name_key(p["name"])
+        k = by_gsis.get(p["id"])
+        for cands in (by_npt.get((nk, p["pos"], p["team"])), by_np.get((nk, p["pos"])), by_ltp.get((nk.split()[-1], p["team"], p["pos"]))):
+            if k:
+                break
+            if cands and len(cands) == 1:
+                k = cands[0]
+        if k:
+            p["sl"] = k
+            got += 1
+    print(f"  Sleeper IDs: {got} of {len(data['players'])} players matched", file=sys.stderr)
+
+
 def render_markdown(md_text: str) -> str:
     """Article HTML for the pre-built pages. Raw HTML in posts is escaped (posts are Markdown only)."""
     import markdown as _md
@@ -1470,6 +1519,7 @@ def main() -> None:
     args = ap.parse_args()
     data = build(args.season or pick_season(), args.week)
     assign_slugs(data)
+    assign_sleeper_ids(data)
     data["posts"] = load_posts()
     write_site(data, args.preview)
 

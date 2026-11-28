@@ -38,6 +38,20 @@ static GitHub Pages site; the browser talks to Supabase directly.
 - Set **Authentication → URL Configuration → Site URL** to the site's address so email links come back to it.
 - `template/assets/vendor/supabase-2.119.0.js` is the Supabase browser client (MIT), hosted with the site.
 
+## Sleeper import
+
+- **My Team** and **Your Account** have "Import your team from Sleeper": enter a Sleeper username (no password), pick a
+  league, and the roster, lineup slots (including superflex and RB/WR or WR/TE flex), scoring and league size come over.
+- Signed in, each league becomes its own saved team (re-importing updates it). Linked teams re-sync from Sleeper when
+  opened (at most every 15 minutes) or with **Sync now**; **Unlink** keeps the roster and allows hand edits.
+  Logged out, the import fills this browser's roster.
+- **Trade Analyzer:** with a linked team, pick a trade partner from the league and add their players with one tap.
+- The browser calls Sleeper's public read-only API directly (`api.sleeper.app`). `build.py` matches every player to his
+  Sleeper ID (`sl` in `data.json`) using Sleeper's player list, downloaded at most once a day as Sleeper asks.
+  Kickers, defenses and deep reserves we don't track are skipped and counted in the import message.
+- Database: `teams.sleeper_league_id`, `sleeper_roster_id`, `sleeper_synced_at`; `profiles.sleeper_username`,
+  `sleeper_user_id`. Lineup formats copied from a league are stored as `c:QB,RB,…`.
+
 ## Data
 
 All free from [nflverse](https://github.com/nflverse/nflverse-data), no API keys: weekly player stats,
