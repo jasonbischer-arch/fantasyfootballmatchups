@@ -693,6 +693,14 @@ table.h2h tbody th { font: 600 13px/1.2 var(--body); color: var(--muted); backgr
 .sp-stats > div { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px; display: grid; gap: 4px; }
 .sp-stats span { font: 700 11px/1 var(--display); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
 .sp-stats b { font: 800 26px/1 var(--display); }
+.sp-verdict { border: 1px solid var(--line); border-left: 6px solid var(--s-yellow); border-radius: 12px; background: var(--surface); padding: 14px 18px; max-width: 75ch; }
+.sp-verdict.start { border-left-color: var(--s-green, #3fa45b); }
+.sp-verdict.sit { border-left-color: var(--s-red, #d9534f); }
+.sp-verdict h2 { margin: 0 0 6px; font-size: 20px; }
+.sp-verdict p { margin: 0 0 6px; line-height: 1.6; }
+.sp-verdict .sp-verdict-cta { margin: 0; font-weight: 600; }
+.ss-sheet { margin-top: 32px; display: grid; gap: 10px; }
+.ss-sheet h3 { margin: 12px 0 0; }
 .sp-list { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
 .sp-tools { color: var(--muted); }
 .static-page table th[scope="row"] { text-align: left; color: var(--muted); font-weight: 600; background: var(--surface); }

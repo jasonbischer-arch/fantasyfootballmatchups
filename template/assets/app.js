@@ -804,8 +804,32 @@ function renderStartSit() {
     <p class="example" id="ssExample" ${ss.example ? "" : "hidden"}>Example comparison. Type any two players above to compare your own.</p>
     <div id="verdict" class="verdict" aria-live="polite"></div>
     <div class="table-box"><table class="cmp" id="cmp"><tbody></tbody></table></div>
-    ${methodLink("Start / Sit projections")}`;
+    ${methodLink("Start / Sit projections")}
+    ${startSitSheet()}`;
   renderSSResult();
+  cleanLinks($("#page"));
+}
+
+// Week N cheat sheet: every fantasy-relevant player ranked by projection, with a start / flex / sit call.
+// Same lines as the pre-built player pages (START_LINES in build.py).
+const START_LINES = { QB: [12, 18], RB: [24, 36], WR: [30, 42], TE: [12, 18] };
+function startSitSheet() {
+  const f = state.fmt;
+  const blocks = POS.map(pos => {
+    const ranked = D.players.filter(p => p.pos === pos).map(p => ({ p, x: project(p, f).proj }))
+      .filter(r => r.x > 0).sort((a, b) => b.x - a.x);
+    const rows = ranked.map((r, i) => ({ ...r, rank: i + 1 })).filter(r => r.p.g >= 3 && r.p.ppg.ppr >= 3);
+    if (!rows.length) return "";
+    const [st, fl] = START_LINES[pos];
+    const call = k => k <= st ? ["Start", "good"] : k <= fl ? [pos === "QB" || pos === "TE" ? "Streamer" : "Flex", "mid"] : ["Sit", "bad"];
+    return `<h3>${pos}</h3><div class="table-box"><table><thead><tr><th scope="col">Rank</th><th scope="col">Player</th><th scope="col">Opp</th>
+      <th scope="col">Proj (${esc(fmtLabel())})</th><th scope="col">Call</th></tr></thead><tbody>${rows.map(r => {
+        const [c, cls] = call(r.rank);
+        return `<tr><td>${r.rank}</td><td>${plink(r.p)} <small class="muted">${esc(r.p.team)}</small> ${injBadge(r.p)}</td>
+          <td>${oppText(r.p)}</td><td>${r.x.toFixed(1)}</td><td><span class="tag ${cls}">${c}</span></td></tr>`; }).join("")}</tbody></table></div>`;
+  }).join("");
+  return blocks ? `<section class="ss-sheet"><h2>Week ${D.week} start/sit cheat sheet</h2>
+    <p class="muted">Our call for every fantasy-relevant player this week, ranked by matchup-adjusted projection. Tap a name for the full breakdown.</p>${blocks}</section>` : "";
 }
 
 function verdictFor(A, B, f) {

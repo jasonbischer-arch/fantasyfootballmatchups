@@ -103,6 +103,10 @@ rather than double-clicking the file.
 - **Player pages** (`/player/<name>/`, every fantasy-relevant player) and **team pages** (`/team/<abbr>/`) are pre-built
   with a written summary, usage, game log and upcoming schedule, so searches like "Ja'Marr Chase matchup" can land on them.
   Player names across the site link to these pages (and still open the quick panel on click).
+- In season, each player page is aimed at "start or sit [player] week N" searches: the title, description and headline ask
+  that question, and a **Week N verdict** box answers it (Start / Flex or Streamer / Sit) from the same projection as the
+  Start/Sit tool, ranked against every player at his position (`START_LINES` in `build.py` and `app.js` set the cutoffs).
+  `/start-sit/` adds a Week N cheat sheet that links to every player page. URLs stay the same week to week.
 - `/qb/`, `/rb/`, `/wr/`, `/te/` include the full matchup table in the page HTML for search engines.
 - `template/assets/og.png` is the share image; `icon-*.png` are the app icons.
 

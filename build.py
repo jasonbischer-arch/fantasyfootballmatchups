@@ -480,7 +480,73 @@ def _matchup_word(rank: int) -> str:
     return "great" if rank >= 25 else "good" if rank >= 17 else "tough" if rank >= 9 else "very tough"
 
 
-def player_page(p: dict, data: dict, pos_rank: dict) -> tuple:
+
+# Weekly start/sit calls for the player pages. Same projection as the site's Start/Sit tool (app.js project()):
+# 60% season + 40% last 3 games, scaled by the opponent's points allowed vs league average (half effect, capped at ±25%).
+START_LINES = {"QB": (12, 18), "RB": (24, 36), "WR": (30, 42), "TE": (12, 18)}   # weekly rank: start / flex-or-stream
+
+
+def _out(p) -> bool:
+    st = ((p.get("inj") or {}).get("status") or "")
+    return st.lower().startswith(("out", "ir", "pup")) or (not p.get("inj") and (p.get("missed") or 0) >= 2)
+
+
+def week_projection(p: dict, data: dict) -> float:
+    if p.get("bye") or not p.get("opp") or _out(p):
+        return 0.0
+    season, recent = p["ppg"]["ppr"], p["l3"]["ppr"]
+    base = 0.6 * season + 0.4 * recent if p["g"] >= 3 else season
+    avg = data["leagueAvg"][p["pos"]]["ppr"]
+    raw = data["defenses"][p["pos"]][p["opp"]]["fppg"]["ppr"] / avg if avg else 1
+    return base * min(1.25, max(0.75, 1 + 0.5 * (raw - 1)))
+
+
+def week_ranks(data: dict) -> dict:
+    """{player id: (projection, weekly rank at his position)} for this week."""
+    out = {}
+    for pos in ("QB", "RB", "WR", "TE"):
+        pl = sorted(((week_projection(p, data), p) for p in data["players"] if p["pos"] == pos), key=lambda x: -x[0])
+        for i, (pr, p) in enumerate(pl, 1):
+            out[p["id"]] = (pr, i if pr > 0 else None)
+    return out
+
+
+def start_sit_call(p: dict, proj: float, wrank) -> tuple[str, str]:
+    """(short verdict, css class)."""
+    if p.get("bye"):
+        return "Sit (bye)", "sit"
+    if _out(p):
+        return "Sit (out)", "sit"
+    start, flex = START_LINES[p["pos"]]
+    if wrank and wrank <= start:
+        return "Start", "start"
+    if wrank and wrank <= flex:
+        return ("Streamer" if p["pos"] in ("QB", "TE") else "Flex"), "flex"
+    return "Sit", "sit"
+
+
+
+def start_sit_sheet(data: dict, pool: list[dict], wk_rank: dict) -> str:
+    """Crawlable Week N start/sit cheat sheet on /start-sit/, linking every player page."""
+    e, wk = esc_html, data["week"]
+    out = [f'<section class="ss-sheet"><h2>Week {wk} start/sit cheat sheet</h2>'
+           '<p>Our call for every fantasy-relevant player this week, ranked by matchup-adjusted PPR projection. Tap a name for the full breakdown.</p>']
+    for pos in ("QB", "RB", "WR", "TE"):
+        rows = sorted((p for p in pool if p["pos"] == pos and not p.get("bye") and not _out(p) and p.get("slug")),
+                      key=lambda p: -wk_rank.get(p["id"], (0, None))[0])
+        if not rows:
+            continue
+        items = "".join(
+            f'<tr><td>{wk_rank[p["id"]][1] or "—"}</td><td><a href="/player/{p["slug"]}/">{e(p["name"])}</a></td><td>{p["team"]}</td>'
+            f'<td>{"@" if p.get("away") else "vs"} {p["opp"]}</td><td>{wk_rank[p["id"]][0]:.1f}</td>'
+            f'<td>{e(start_sit_call(p, *wk_rank[p["id"]])[0])}</td></tr>' for p in rows)
+        out.append(f'<h3>{POS_LONG[pos].title()}s</h3><div class="table-box"><table><thead><tr><th scope="col">Rank</th><th scope="col">Player</th>'
+                   f'<th scope="col">Team</th><th scope="col">Opp</th><th scope="col">Proj (PPR)</th><th scope="col">Call</th></tr></thead>'
+                   f'<tbody>{items}</tbody></table></div>')
+    return "".join(out) + "</section>"
+
+
+def player_page(p: dict, data: dict, pos_rank: dict, wk_rank: dict | None = None) -> tuple:
     """(route, title, description, h1, intro, indexable, extra) for a player page."""
     e = esc_html
     T = data["teams"]
@@ -544,10 +610,36 @@ def player_page(p: dict, data: dict, pos_rank: dict) -> tuple:
         nxt = [g for g in team.get("sched", [])][:5]
         sched = "".join(f"<li>Week {w}: {'@' if a else 'vs'} <a href=\"/team/{o.lower()}/\">{e(T[o]['name'])}</a> "
                         f"(rank {data['defenses'][p['pos']][o]['rank']['ppr']} vs {p['pos']}s)</li>" for w, o, a in nxt)
+    # This week's start/sit call (in season, when he has a game or is on bye).
+    nm, last = p["name"], p["name"].split()[-1]
+    h1, verdict_html, call = p["name"], "", None
+    if not off:
+        proj, wrank = (wk_rank or {}).get(p["id"], (0.0, None))
+        call, cls = start_sit_call(p, proj, wrank)
+        start_line, flex_line = START_LINES[p["pos"]]
+        h1 = f"Start or sit {nm} in Week {wk}?"
+        if p.get("bye"):
+            answer = f"Sit him: the {tname} are on bye in Week {wk}."
+        elif _out(p):
+            answer = f"Sit him: {nm} is {'listed as ' + status if status else 'not expected to play'} for Week {wk}."
+        else:
+            d = data["defenses"][p["pos"]][p["opp"]]
+            rk = d["rank"]["ppr"]
+            where = f"{'at' if p.get('away') else 'vs'} the {T[p['opp']]['name']}"
+            tier = {"start": f"a top-{start_line} {p['pos']}", "flex": f"a {p['pos']}{start_line + 1}–{flex_line} range option"}.get(cls, f"outside the top {flex_line} {p['pos']}s")
+            answer = {"start": f"Start {last}.", "flex": f"{last} is a {'streaming option' if p['pos'] in ('QB', 'TE') else 'flex play'}, not a locked-in starter.",
+                      "sit": f"Sit {last} if you have a comparable option."}[cls]
+            answer += (f" We project {proj:.1f} PPR points in Week {wk} {where}, {p['pos']}{wrank} this week ({tier}). "
+                       f"The matchup is {_matchup_word(rk)}: the {T[p['opp']]['name']} rank {rk} of 32 in PPR points allowed to {POS_LONG[p['pos']]}s.")
+            if status:
+                answer += f" He is listed as {status}, so check his status before kickoff."
+        verdict_html = (f'<section class="sp-verdict {cls}" aria-labelledby="spv"><h2 id="spv">Week {wk} verdict: <b>{e(call)}</b></h2>'
+                        f'<p>{e(answer)}</p><p class="sp-verdict-cta"><a href="/start-sit/">Compare {e(last)} with another player →</a></p></section>')
     html = f"""<div class="static-page" data-static="player">
 <nav class="crumbs" aria-label="Breadcrumb"><a href="/">Home</a> › <a href="/players/">Players</a> › <span>{e(p['name'])}</span></nav>
 <div class="sp-head">{f'<img class="sp-photo" src="{e(p["img"])}" alt="{e(p["name"])}" width="96" height="96" loading="lazy">' if p.get('img') else ''}
-<div><h1>{e(p['name'])}</h1><p class="sp-sub">{p['pos']}{rank or ''} · <a href="/team/{p['team'].lower()}/">{e(tname)}</a>{f' · <b>{e(status)}</b>' if status else ''}</p></div></div>
+<div><h1>{e(h1)}</h1><p class="sp-sub">{p['pos']}{rank or ''} · <a href="/team/{p['team'].lower()}/">{e(tname)}</a>{f' · <b>{e(status)}</b>' if status else ''}</p></div></div>
+{verdict_html}
 <p class="sp-summary">{e(summary)}</p>
 <div class="sp-stats"><div><span>PPR pts/game</span><b>{ppr:.1f}</b></div><div><span>Last 3 games</span><b>{l3:.1f}</b></div>
 <div><span>Games</span><b>{p['g']}</b></div><div><span>Position rank</span><b>{p['pos']}{rank or '—'}</b></div></div>
@@ -556,11 +648,18 @@ def player_page(p: dict, data: dict, pos_rank: dict) -> tuple:
 {f'<h2>Upcoming schedule</h2><ul class="sp-list">{sched}</ul>' if sched else ''}
 <p class="sp-tools">Compare him in <a href="/start-sit/">Start / Sit</a>, value him in the <a href="/trade/">Trade Analyzer</a>, or see the <a href="/{p['pos'].lower()}/">{p['pos']} matchup chart</a>.</p>
 </div>"""
-    word = "Final Stats" if off else f"Week {wk} Matchup"
-    title = f"{p['name']} Fantasy: {word}, Usage & Stats · The Sports Mattress"
-    desc = (f"{p['name']} ({p['pos']}, {tname}) fantasy stats: {ppr:.1f} PPR points per game" +
+    if off:
+        title = f"{p['name']} Fantasy: Final Stats, Usage & Game Log · The Sports Mattress"
+    else:
+        opp_txt = "Bye" if p.get("bye") else f"{'@' if p.get('away') else 'vs'} {p.get('opp')}"
+        label = (call if p.get("bye") else f"Sit ({call[5:-1]}, {opp_txt})") if call.startswith("Sit (") else f"{call} ({opp_txt})"
+        title = f"Start or Sit {p['name']} Week {wk}? {label}"
+        if len(title) <= 42:                          # brand only when the title still fits in search results
+            title += " · The Sports Mattress"
+    desc = ((f"Start or sit {p['name']} in Week {wk}? Our call: {call}. " if not off else "") +
+            f"{p['name']} ({p['pos']}, {tname}): {ppr:.1f} PPR points per game" +
             (f", {_pct(s.get('tgtShare'))} target share" if p['pos'] in ('WR', 'TE') else f", {_pct(s.get('rushShare'))} rush share" if p['pos'] == 'RB' else "") +
-            (f", Week {wk} matchup vs {p['opp']}" if not off and p.get('opp') else "") + ", usage trends and game log.")
+            (f", Week {wk} matchup vs {p['opp']} with projection" if not off and p.get('opp') else "") + ", usage trends and game log.")
     return (f"player/{p['slug']}", title, desc[:300], p["name"], "", True,
             {"static_html": html, "image": p.get("img") and p["img"].replace(",w_120/", ",w_600/"),
              "crumbs": [("Players", SITE_URL + "players/")], "modified": data["updated"]})
@@ -1083,9 +1182,9 @@ def site_routes(data: dict) -> list[tuple]:
                        f"Week {wk} {P} matchups",
                        f"How each team's {name.lower()}s line up against this week's opponent, color-coded from tough to great.", True))
     routes += [
-        ("start-sit", "Start/Sit Tool: Compare Two Players · The Sports Mattress",
-         f"Who should you start in Week {wk}? Compare any two players with matchup-adjusted projections, usage, injuries, "
-         "team totals and a clear verdict.", "Start / Sit", "Compare any two players, at any position, and get a verdict with the reasons.", True),
+        ("start-sit", f"Week {wk} Start/Sit Cheat Sheet & Compare Tool · The Sports Mattress",
+         f"Who should you start in Week {wk}? Start/sit calls for every fantasy-relevant QB, RB, WR and TE, plus a tool to compare any two "
+         "players with matchup-adjusted projections, usage and injuries.", "Start / Sit", "Compare any two players, at any position, and get a verdict with the reasons.", True),
         ("my-team", "Fantasy Lineup Optimizer · The Sports Mattress",
          f"Add your fantasy roster and get your best Week {wk} lineup, ranked by matchup-adjusted projection. Supports 3 WR, 2 flex and superflex.",
          "My Team", "Build your roster and get this week's best lineup.", True),
@@ -1128,7 +1227,10 @@ def site_routes(data: dict) -> list[tuple]:
     for pos in ("QB", "RB", "WR", "TE"):
         for i, p in enumerate(sorted([p for p in data["players"] if p["pos"] == pos], key=lambda p: -p["ppg"]["ppr"]), 1):
             pos_rank[p["id"]] = i
-    routes += [player_page(p, data, pos_rank) for p in pool]
+    wk_rank = {} if off else week_ranks(data)
+    routes += [player_page(p, data, pos_rank, wk_rank) for p in pool]
+    if not off:
+        routes = [r if r[0] != "start-sit" else r + ({"chart_html": start_sit_sheet(data, pool, wk_rank)},) for r in routes]
     routes += [team_page(t, data) for t in sorted(data["teams"])]
     routes.append(("write", "Write · The Sports Mattress", "Write and publish articles.", "Write", "", False))
     for slug, t in (("login", "Log in"), ("signup", "Create account"), ("forgot", "Reset password"), ("reset", "Set new password"), ("account", "Your account")):
