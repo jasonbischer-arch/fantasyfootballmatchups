@@ -236,7 +236,7 @@ function boot() {
   page.addEventListener("click", onClick);
   page.addEventListener("input", onInput);
   page.addEventListener("change", onInput);
-  page.addEventListener("submit", e => { e.preventDefault(); onAuthSubmit(e); onSettingsSubmit(e); onSleeperSubmit(e); });
+  page.addEventListener("submit", e => { e.preventDefault(); onAuthSubmit(e); onSettingsSubmit(e); onImportSubmit(e); });
   $("#playerDialog").addEventListener("click", e => {
     if (e.target.id === "playerDialog") return closePlayer();
     onClick(e);
@@ -466,7 +466,7 @@ const ACTIONS = {
     render();
   },
   rmroster(el) { removeFromRoster(el.dataset.id); render(); },
-  clearroster() { if (!signedIn()) store.set("tsm-sleeper", null); setRosterIds([]); render(); },
+  clearroster() { if (!signedIn()) { store.set("tsm-sleeper", null); store.set("tsm-link", null); } setRosterIds([]); render(); },
   keepexample() { setRosterIds(exampleRoster().map(p => p.id)); render(); },
   addroster() { const el = $("#mtAdd"); const p = el && byLabel.get(el.value.trim().toLowerCase()); if (p) addToRoster(p); },
   tadd(el) { const p = byId.get(el.dataset.id); if (p) tradeAdd(el.dataset.side, p); },
@@ -1049,7 +1049,7 @@ function renderMyTeam() {
     ${pageHead(offseason() ? `${D.season} season · final` : `Week ${D.week} · ${esc(fmtLabel())}`, r.cloud && r.team ? esc(r.team.name) : "My Team", r.cloud
       ? "Your roster is saved to your account. Here's this week's best lineup, ranked by matchup-adjusted projection."
       : "Add your roster and get this week's best lineup, ranked by matchup-adjusted projection.")}
-    ${sleeperBox("my-team")}
+    ${importBox("my-team")}
     ${r.cloud ? teamSwitcher() : sb ? `<div class="panel panel-pad save-cta"><span><strong>Save your team.</strong> <span class="muted">Right now it's only in this browser. Create a free account to keep it, add more teams and use it on any device.</span></span><span style="display:flex;gap:8px"><a class="btn small" href="#login">Log in</a><a class="btn small primary" href="#signup">Create account</a></span></div>` : ""}
     <div class="panel panel-pad addbar">
       <div class="field" style="flex:1 1 260px"><label for="mtAdd">Add a player</label><input id="mtAdd" type="search" list="playerList" placeholder="Type a name and pick from the list" autocomplete="off"></div>
@@ -1072,7 +1072,8 @@ function renderMyTeam() {
       </div>
     </section>
     ${methodLink("lineup picks")}`;
-  sleeperAutoSync();
+  leagueAutoSync();
+  if (!imp.returnChecked) { imp.returnChecked = true; yahooReturn(); }
 }
 
 // ------------------------------------------------------------------ PLAYERS
@@ -1703,7 +1704,9 @@ function renderPrivacy() {
     ["Without an account", `<p>Everything you enter (your roster, Start / Sit picks, trades and scoring format) is saved only in your browser's local storage. It stays on your device and isn't sent to us. Clearing your browser data removes it.</p>`],
     ["With an account", `<p>If you create an account we store your <strong>email address</strong>, an optional <strong>display name</strong>, your <strong>password</strong> (as a secure hash we can't read), and what you choose to save: <strong>teams, saved trades, watchlist and settings</strong> (scoring format, league size, superflex). This is used only to run your account. We don't sell it or share it.</p>
       <p>Account data is stored with <a href="https://supabase.com/" target="_blank" rel="noopener">Supabase</a> in the United States. Each account can only read and change its own data. You stay logged in on a device until you log out.</p>`],
-    ["Sleeper import", `<p>If you import a team from <a href="https://sleeper.com/" target="_blank" rel="noopener">Sleeper</a>, your browser asks Sleeper's public API for your username's leagues and rosters. We never ask for or see your Sleeper password, and we can't change anything in your Sleeper leagues. With an account we save your Sleeper username and the imported rosters so they stay in sync.</p>`],
+    ["League imports", `<p>If you import a team from <strong>Sleeper</strong> or <strong>ESPN</strong>, your browser reads your league's rosters and settings directly from that site. We never ask for or see your password there, and we can't change anything in your leagues.</p>
+      <p>For <strong>Yahoo</strong>, you log in on Yahoo's own site and approve read-only access. Yahoo gives us a one-time code, which our server exchanges for a short-lived key, uses once to read your leagues and rosters, and then discards. We don't store it.</p>
+      <p>With an account we save your Sleeper username and the imported rosters (with their league IDs) so they stay in sync. Pasted rosters are matched in your browser and aren't sent anywhere.</p>`],
     ["Deleting your data", `<p>Delete your account any time from <a href="#account">Your Account</a>. That permanently removes your login and everything saved to it.</p>`],
     ["Emails", `<p>We only email you for account tasks you start, like confirming your address or resetting your password. No newsletters or marketing.</p>`],
     ["Analytics", `<p>We use Google Analytics, through Google Tag Manager, to count visits and see which pages and tools people use. It uses cookies and collects standard information such as pages viewed, approximate location, device and browser. We don't send it your email, roster or anything you type. Analytics cookies are only used if you allow them: visitors in the EU, UK and Switzerland are asked first, and anyone can accept or reject them in <button type="button" class="link-btn" data-cookie-settings>cookie settings</button> (also linked at the bottom of every page). You can also use Google's <a href="https://tools.google.com/dlpage/gaoptout" target="_blank" rel="noopener">opt-out add-on</a>. We never use advertising cookies.</p>`],
@@ -1827,82 +1830,113 @@ function renderAcct() {
 }
 
 
-// ---------------------------------------------------------------- Sleeper import
-// Sleeper's public API (read-only, no login, allows browser requests). Rosters are matched to our players by
-// Sleeper player ID ("sl" in data.json, matched at build time).
+// ---------------------------------------------------------------- League import (Sleeper, ESPN, Yahoo, paste)
+// Sleeper and ESPN are read straight from the browser (both allow it, no login for public leagues). Yahoo needs a
+// Yahoo login, so a small Supabase function swaps the login code for the user's leagues. Players are matched by
+// Sleeper ID ("sl") and ESPN ID ("es") from data.json, and by name for Yahoo and pasted rosters.
+const PROVIDERS = { sleeper: "Sleeper", espn: "ESPN", yahoo: "Yahoo" };
 const SLEEPER = "https://api.sleeper.app/v1";
-const sl = { user: null, leagues: null, busy: false, error: "", leagueData: new Map(), syncing: new Set(), synced: new Set() };
-let bySl = null;
-function slPlayer(id) {
-  if (!bySl) { bySl = new Map(); D.players.forEach(p => { if (p.sl) bySl.set(String(p.sl), p); }); }
-  return bySl.get(String(id));
+const ESPN_API = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl";
+const YAHOO_FN = (SB_CFG.url || "") + "/functions/v1/yahoo";
+const SITE = SB_CFG.site || location.origin + "/";
+const imp = {
+  tab: store.get("tsm-imp-tab", "sleeper"), busy: false, error: "",
+  sleeper: { user: null, leagues: null }, espn: { league: null, hint: null }, yahoo: { config: undefined, leagues: null }, paste: { ids: null },
+  leagueData: new Map(), syncing: new Set(), synced: new Set(),
+};
+function impError(e) {
+  return e && e.message && !/sleeper-down|timeout|fetch|network|load failed/i.test(e.message) ? e.message : "That site didn't respond. Try again in a minute.";
 }
-async function slGet(path) {
-  const r = await within(fetch(SLEEPER + path), 12000);
-  if (!r.ok) throw new Error("sleeper-down");
+async function getJSON(url, opts) {
+  const r = await within(fetch(url, opts), 15000);
+  if (!r.ok) { const err = new Error("http " + r.status); err.status = r.status; throw err; }
   return r.json();
 }
-function slError(e) {
-  return e && e.message && !/sleeper-down|timeout|fetch|network/i.test(e.message) ? e.message : "Sleeper didn't respond. Try again in a minute.";
+
+// ---- player matching
+let idx = null;
+function playerIndex() {
+  if (idx) return idx;
+  idx = { sl: new Map(), es: new Map(), npt: new Map(), np: new Map(), ltp: new Map() };
+  const add = (m, k, p) => { if (!m.has(k)) m.set(k, []); m.get(k).push(p); };
+  D.players.forEach(p => {
+    if (p.sl) idx.sl.set(String(p.sl), p);
+    if (p.es) idx.es.set(String(p.es), p);
+    const k = nameKey(p.name);
+    add(idx.npt, `${k}|${p.pos}|${p.team}`, p); add(idx.np, `${k}|${p.pos}`, p); add(idx.ltp, `${k.split(" ").pop()}|${p.team}|${p.pos}`, p);
+  });
+  return idx;
 }
-function slUsername() {
-  return (account.profile && account.profile.sleeper_username) || store.get("tsm-sleeper-user", "") || "";
+function nameKey(n) {
+  return String(n || "").normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[.'’-]/g, "")
+    .replace(/\b(jr|sr|ii|iii|iv|v)\b/g, "").replace(/\s+/g, " ").trim();
 }
-// Sleeper's lineup slots -> ours. Kickers, defenses, IDP and bench aren't projected here.
-const SL_SLOT = { QB: "QB", RB: "RB", WR: "WR", TE: "TE", FLEX: "FLEX", SUPER_FLEX: "SFLEX", WRRB_FLEX: "WRRB", REC_FLEX: "REC" };
-function leagueFormat(lg) {
-  const slots = (lg.roster_positions || []).map(x => SL_SLOT[x]).filter(Boolean).slice(0, 20);
+const TEAM_FIX = { LAR: "LA", WSH: "WAS", JAC: "JAX", LVR: "LV", OAK: "LV", SD: "LAC", STL: "LA" };
+function byName(name, pos, team) {
+  const I = playerIndex(), k = nameKey(name), t = TEAM_FIX[team] || team;
+  for (const c of [I.npt.get(`${k}|${pos}|${t}`), I.np.get(`${k}|${pos}`), I.ltp.get(`${k.split(" ").pop()}|${t}|${pos}`)]) if (c && c.length === 1) return c[0];
+  return null;
+}
+// [players we track, how many we skipped (kickers, defenses, deep reserves)]
+function matchIds(list, find) {
+  const got = []; let missed = 0;
+  (list || []).forEach(x => { const p = find(x); if (p) { if (!got.includes(p.id)) got.push(p.id); } else missed++; });
+  return { ids: got.slice(0, 40), missed };
+}
+const slMatch = ids => matchIds(ids, id => playerIndex().sl.get(String(id)));
+const esMatch = entries => matchIds(entries, e => playerIndex().es.get(String(((e.playerPoolEntry || {}).player || {}).id)));
+const yhMatch = players => matchIds(players, p => byName(p.name, p.pos, p.team));
+
+// ---- lineup formats and league settings
+const SLOT_ORDER = ["QB", "RB", "WR", "TE", "FLEX", "WRRB", "REC", "SFLEX"];
+function formatFromSlots(slots) {
+  slots = slots.filter(x => ELIGIBLE[x]).sort((a, b) => SLOT_ORDER.indexOf(a) - SLOT_ORDER.indexOf(b)).slice(0, 20);
   if (!slots.length) return "standard";
   const preset = Object.entries(SLOT_SETS).find(([, v]) => v.slots.slice().sort().join() === slots.slice().sort().join());
   return preset ? preset[0] : "c:" + slots.join(",");
 }
-function leagueScoring(lg) { const r = (lg.scoring_settings || {}).rec; return r == null || r >= 1 ? "ppr" : r >= 0.5 ? "half" : "std"; }
-function leagueSf(lg) { const s = slotSet(leagueFormat(lg)).slots; return s.includes("SFLEX") || s.filter(x => x === "QB").length > 1; }
-function leagueSummary(lg) {
-  return `${lg.total_rosters || "?"} teams · ${D.formats[leagueScoring(lg)]}${leagueSf(lg) ? " · Superflex" : ""}${lg.settings && lg.settings.type === 2 ? " · Dynasty" : lg.settings && lg.settings.type === 1 ? " · Keeper" : ""}`;
+const recToFmt = r => (r == null || r >= 1 ? "ppr" : r >= 0.5 ? "half" : "std");
+const isSf = fmt => { const s = slotSet(fmt).slots; return s.includes("SFLEX") || s.filter(x => x === "QB").length > 1; };
+function describeLeague(L) { return `${L.size || "?"} teams · ${D.formats[L.scoring]}${isSf(L.fmt) ? " · Superflex" : ""}${L.extra ? " · " + L.extra : ""}`; }
+async function applyLeagueSettings(L) {
+  const size = Math.min(20, Math.max(6, L.size || 12)), sf = isSf(L.fmt);
+  state.fmt = L.scoring; store.set("tsm-fmt", L.scoring);
+  if (signedIn() && account.profile) await saveProfile({ scoring: L.scoring, league_size: size, superflex: sf }, "");
+  else store.set("tsm-league", { size, sf });
+  clearSettingsCaches();
 }
-// Players on a Sleeper roster that we track, plus how many we skipped (kickers, defenses, deep reserves).
-function mapSleeper(ids) {
-  const got = [];
-  let missed = 0;
-  (ids || []).forEach(id => { const p = slPlayer(id); if (p) { if (!got.includes(p.id)) got.push(p.id); } else missed++; });
-  return { ids: got.slice(0, 40), missed };
+
+// ---- saving an imported roster: a saved team (signed in, one per league) or this browser's roster
+function teamLink(t) {
+  if (!t) return null;
+  if (t.provider && t.provider_league_id) return { provider: t.provider, league_id: t.provider_league_id, team_id: t.provider_team_id, synced: t.provider_synced_at };
+  if (t.sleeper_league_id) return { provider: "sleeper", league_id: t.sleeper_league_id, team_id: t.sleeper_roster_id != null ? String(t.sleeper_roster_id) : null, synced: t.sleeper_synced_at };
+  return null;
 }
-async function sleeperFind(username) {
-  username = String(username || "").trim().replace(/^@/, "");
-  if (!username) { sl.error = "Enter your Sleeper username."; return render(); }
-  Object.assign(sl, { busy: true, error: "", leagues: null }); render();
-  try {
-    const user = await slGet("/user/" + encodeURIComponent(username));
-    if (!user || !user.user_id) throw new Error(`We couldn't find a Sleeper user named “${username}”. Use your username (in the Sleeper app: Settings → Profile), not your display name.`);
-    let season = String(D.season);
-    try { const st = await slGet("/state/nfl"); season = String(st.league_season || st.season || season); } catch (e) { /* use ours */ }
-    let leagues = (await slGet(`/user/${user.user_id}/leagues/nfl/${season}`)) || [];
-    if (!leagues.length && season !== String(D.season)) leagues = (await slGet(`/user/${user.user_id}/leagues/nfl/${D.season}`)) || [];
-    sl.user = user; sl.leagues = leagues;
-    store.set("tsm-sleeper-user", user.username || username);
-    if (signedIn() && account.profile && (account.profile.sleeper_user_id !== user.user_id || account.profile.sleeper_username !== (user.username || username)))
-      saveProfile({ sleeper_username: (user.username || username).slice(0, 40), sleeper_user_id: user.user_id }, "");
-    if (!leagues.length) sl.error = `No NFL leagues for ${user.display_name || username} this season.`;
-  } catch (e) { sl.error = slError(e); }
-  sl.busy = false; render();
+function localLink() {
+  const l = store.get("tsm-link", null);
+  if (l && l.provider) return l;
+  const old = store.get("tsm-sleeper", null);   // first version stored Sleeper links here
+  return old && old.league_id ? { provider: "sleeper", league_id: old.league_id, team_id: String(old.roster_id), user_id: old.user_id, name: old.name, synced: old.synced } : null;
 }
-async function sleeperRosterFor(leagueId, userId, rosterId) {
-  const rosters = (await slGet(`/league/${leagueId}/rosters`)) || [];
-  const r = rosters.find(x => (rosterId != null && x.roster_id === rosterId)) ||
-            rosters.find(x => x.owner_id === userId || (x.co_owners || []).includes(userId));
-  if (!r) throw new Error("You don't have a team in that league.");
-  return r;
-}
-// Import one league's roster: a saved team when signed in (updated in place if already imported), else this browser's roster.
-async function sleeperImport(lg, opts = {}) {
-  const r = await sleeperRosterFor(lg.league_id, sl.user.user_id);
-  const { ids, missed } = mapSleeper(r.players);
-  const fmt = leagueFormat(lg), name = String(lg.name || "").trim().slice(0, 40).trim() || "Sleeper team";
+function linkedLeague() {
   if (signedIn() && account.loaded) {
-    let t = account.teams.find(x => x.sleeper_league_id === lg.league_id);
-    const row = { name: t ? t.name : name, player_ids: ids, lineup_format: fmt, sleeper_league_id: lg.league_id,
-                  sleeper_roster_id: r.roster_id, sleeper_synced_at: new Date().toISOString() };
+    const t = activeTeam(), l = teamLink(t);
+    return l ? { ...l, name: t.name, team: t, user_id: account.profile && account.profile.sleeper_user_id } : null;
+  }
+  return localLink();
+}
+function isImported(provider, leagueId) {
+  if (signedIn() && account.loaded) return account.teams.some(t => { const l = teamLink(t); return l && l.provider === provider && l.league_id === String(leagueId); });
+  const l = localLink(); return !!l && l.provider === provider && l.league_id === String(leagueId);
+}
+async function saveImported(L, opts = {}) {
+  const name = String(L.name || "").trim().slice(0, 40).trim() || `${PROVIDERS[L.provider]} team`;
+  const now = new Date().toISOString();
+  if (signedIn() && account.loaded) {
+    let t = account.teams.find(x => { const l = teamLink(x); return l && l.provider === L.provider && l.league_id === String(L.league_id); });
+    const row = { name: t ? t.name : name, player_ids: L.ids, lineup_format: L.fmt, provider: L.provider, provider_league_id: String(L.league_id),
+                  provider_team_id: String(L.team_id), provider_synced_at: now };
     if (t) {
       const { error } = await sb.from("teams").update(row).eq("id", t.id);
       if (error) throw new Error(friendlyError(error));
@@ -1914,141 +1948,360 @@ async function sleeperImport(lg, opts = {}) {
     }
     if (!opts.keepActive) await setActiveTeam(t.id, true);
   } else {
-    store.set("tsm-roster", ids); store.set("tsm-slots", fmt);
-    store.set("tsm-sleeper", { league_id: lg.league_id, roster_id: r.roster_id, user_id: sl.user.user_id, name, synced: Date.now() });
+    store.set("tsm-roster", L.ids); store.set("tsm-slots", L.fmt); store.set("tsm-sleeper", null);
+    store.set("tsm-link", { provider: L.provider, league_id: String(L.league_id), team_id: String(L.team_id), user_id: L.user_id || null, name, synced: now });
   }
-  sl.synced.add(lg.league_id);
-  return { ids, missed, name };
+  imp.synced.add(`${L.provider}:${L.league_id}`);
+  return name;
 }
-// Use the league's scoring, size and superflex setting across the site.
-async function applyLeagueSettings(lg) {
-  const fmt = leagueScoring(lg), size = Math.min(20, Math.max(6, lg.total_rosters || 12)), sf = leagueSf(lg);
-  state.fmt = fmt; store.set("tsm-fmt", fmt);
-  if (signedIn() && account.profile) await saveProfile({ scoring: fmt, league_size: size, superflex: sf }, "");
-  else store.set("tsm-league", { size, sf });
-  clearSettingsCaches();
+async function finishImport(L, quietSettings) {
+  const name = await saveImported(L);
+  if (!quietSettings) await applyLeagueSettings(L);
+  toast(`Imported ${L.ids.length} players from “${name}”${L.missed ? ` (${L.missed} kickers, defenses or deep reserves skipped)` : ""}. Scoring set to ${D.formats[L.scoring]}.`);
+  imp.sleeper.leagues = null; imp.espn.league = null; imp.yahoo.leagues = null; imp.error = ""; imp.open = false;
+  navigate("my-team"); render();
 }
-function linkedLeague() {
-  // The Sleeper league behind the current roster, if any: { league_id, roster_id, name, team? }.
-  if (signedIn() && account.loaded) {
-    const t = activeTeam();
-    return t && t.sleeper_league_id ? { league_id: t.sleeper_league_id, roster_id: t.sleeper_roster_id, name: t.name, team: t, synced: t.sleeper_synced_at } : null;
-  }
-  const l = store.get("tsm-sleeper", null);
-  return l && l.league_id ? { ...l, synced: l.synced } : null;
+
+// ---- Sleeper
+const SL_SLOT = { QB: "QB", RB: "RB", WR: "WR", TE: "TE", FLEX: "FLEX", SUPER_FLEX: "SFLEX", WRRB_FLEX: "WRRB", REC_FLEX: "REC" };
+function slUsername() { return (account.profile && account.profile.sleeper_username) || store.get("tsm-sleeper-user", "") || ""; }
+function sleeperLeagueInfo(lg) {
+  const fmt = formatFromSlots((lg.roster_positions || []).map(x => SL_SLOT[x]).filter(Boolean));
+  const type = lg.settings && lg.settings.type;
+  return { provider: "sleeper", league_id: lg.league_id, name: lg.name, size: lg.total_rosters, fmt, scoring: recToFmt((lg.scoring_settings || {}).rec),
+           extra: type === 2 ? "Dynasty" : type === 1 ? "Keeper" : "" };
 }
-// Pull the latest roster (waivers, trades) for a linked team. Quiet unless something changed.
-async function sleeperSync(force) {
-  const L = linkedLeague();
-  if (!L || sl.syncing.has(L.league_id)) return;
-  const age = Date.now() - new Date(L.synced || 0).getTime();
-  if (!force && (sl.synced.has(L.league_id) || age < 15 * 60 * 1000)) return;
-  sl.syncing.add(L.league_id); if (force) render();
+async function sleeperFind(username) {
+  username = String(username || "").trim().replace(/^@/, "");
+  if (!username) { imp.error = "Enter your Sleeper username."; return render(); }
+  Object.assign(imp, { busy: true, error: "" }); imp.sleeper.leagues = null; render();
   try {
-    const r = await sleeperRosterFor(L.league_id, L.user_id || (account.profile && account.profile.sleeper_user_id), L.roster_id);
-    const { ids } = mapSleeper(r.players);
-    const now = new Date().toISOString();
-    const before = roster().ids.slice().sort().join();
+    const user = await getJSON(`${SLEEPER}/user/${encodeURIComponent(username)}`);
+    if (!user || !user.user_id) throw new Error(`We couldn't find a Sleeper user named “${username}”. Use your username (in the Sleeper app: Settings → Profile), not your display name.`);
+    let season = String(D.season);
+    try { const st = await getJSON(`${SLEEPER}/state/nfl`); season = String(st.league_season || st.season || season); } catch (e) { /* use ours */ }
+    let leagues = (await getJSON(`${SLEEPER}/user/${user.user_id}/leagues/nfl/${season}`)) || [];
+    if (!leagues.length && season !== String(D.season)) leagues = (await getJSON(`${SLEEPER}/user/${user.user_id}/leagues/nfl/${D.season}`)) || [];
+    imp.sleeper = { user, leagues };
+    store.set("tsm-sleeper-user", user.username || username);
+    if (signedIn() && account.profile && (account.profile.sleeper_user_id !== user.user_id || account.profile.sleeper_username !== (user.username || username)))
+      saveProfile({ sleeper_username: (user.username || username).slice(0, 40), sleeper_user_id: user.user_id }, "");
+    if (!leagues.length) imp.error = `No NFL leagues for ${user.display_name || username} this season.`;
+  } catch (e) { imp.error = impError(e); }
+  imp.busy = false; render();
+}
+async function sleeperRoster(leagueId, userId, rosterId) {
+  const rosters = (await getJSON(`${SLEEPER}/league/${leagueId}/rosters`)) || [];
+  const r = rosters.find(x => rosterId != null && String(x.roster_id) === String(rosterId)) ||
+            rosters.find(x => userId && (x.owner_id === userId || (x.co_owners || []).includes(userId)));
+  if (!r) throw new Error("You don't have a team in that league.");
+  return r;
+}
+async function sleeperImport(lg) {
+  const r = await sleeperRoster(lg.league_id, imp.sleeper.user.user_id);
+  return { ...sleeperLeagueInfo(lg), ...slMatch(r.players), team_id: r.roster_id, user_id: imp.sleeper.user.user_id };
+}
+
+// ---- ESPN
+const ES_SLOT = { 0: "QB", 2: "RB", 3: "WRRB", 4: "WR", 5: "REC", 6: "TE", 7: "SFLEX", 23: "FLEX" };
+function parseEspn(input) {
+  const s = String(input || "").trim();
+  const id = (s.match(/leagueId=(\d+)/i) || s.match(/^(\d{3,12})$/) || [])[1];
+  const team = (s.match(/teamId=(\d+)/i) || [])[1];
+  return { id, team };
+}
+async function espnLeague(id) {
+  const views = "view=mTeam&view=mRoster&view=mSettings";
+  let lastErr;
+  for (const season of [D.season, D.season + 1]) {
+    try { return await getJSON(`${ESPN_API}/seasons/${season}/segments/0/leagues/${id}?${views}`, { credentials: "include" }); }
+    catch (e) { lastErr = e; if (e.status !== 404) break; }
+  }
+  if (lastErr && lastErr.status === 401) throw new Error("That ESPN league is private. Ask your league manager to turn on “Make league viewable to public” (LM Tools → League Settings → Basic Settings), or use Paste to copy your roster in.");
+  if (lastErr && lastErr.status === 404) throw new Error("We couldn't find that ESPN league. Check the league ID: it's the number after leagueId= in your league's web address.");
+  throw lastErr;
+}
+function espnInfo(L) {
+  const st = L.settings || {}, counts = (st.rosterSettings || {}).lineupSlotCounts || {};
+  const slots = []; Object.entries(counts).forEach(([k, n]) => { if (ES_SLOT[k]) for (let i = 0; i < n; i++) slots.push(ES_SLOT[k]); });
+  const rec = ((st.scoringSettings || {}).scoringItems || []).find(x => x.statId === 53);
+  const members = new Map((L.members || []).map(m => [m.id, m.displayName || ""]));
+  const teams = (L.teams || []).map(t => ({
+    id: t.id, name: String(t.name || [t.location, t.nickname].filter(Boolean).join(" ") || t.abbrev || `Team ${t.id}`).trim(),
+    owner: (t.owners || []).map(o => members.get(o)).filter(Boolean).join(", "),
+    entries: ((t.roster || {}).entries) || [],
+  }));
+  return { provider: "espn", league_id: String(L.id), name: st.name || "ESPN league", size: st.size || teams.length, fmt: formatFromSlots(slots), scoring: recToFmt(rec ? rec.points : 0), teams };
+}
+async function espnFind(input) {
+  const { id, team } = parseEspn(input);
+  if (!id) { imp.error = "Paste your ESPN league's web address, or just the league ID number."; return render(); }
+  Object.assign(imp, { busy: true, error: "" }); imp.espn.league = null; render();
+  try {
+    const info = espnInfo(await espnLeague(id));
+    imp.espn = { league: info, hint: team || null };
+    store.set("tsm-espn-league", id);
+    imp.leagueData.set(`espn:${info.league_id}`, info.teams.map(t => ({ team_id: String(t.id), name: t.name, ids: esMatch(t.entries).ids })));
+  } catch (e) { imp.error = impError(e); }
+  imp.busy = false; render();
+}
+
+// ---- Yahoo
+async function yahooConfig() {
+  if (imp.yahoo.config !== undefined || !SB_CFG.url) return imp.yahoo.config;
+  imp.yahoo.config = null;
+  try { imp.yahoo.config = await getJSON(YAHOO_FN); } catch (e) { imp.yahoo.config = { configured: false }; }
+  if (imp.tab === "yahoo") render();
+  return imp.yahoo.config;
+}
+function yahooConnect() {
+  const c = imp.yahoo.config;
+  if (!c || !c.configured) return;
+  const st = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  try { sessionStorage.setItem("tsm-yahoo-state", st); } catch (e) { /* ignore */ }
+  store.set("tsm-imp-tab", "yahoo");
+  location.href = "https://api.login.yahoo.com/oauth2/request_auth?" + new URLSearchParams({
+    client_id: c.client_id, redirect_uri: SITE + "yahoo/", response_type: "code", state: st, language: "en-us" });
+}
+// After Yahoo's login, /yahoo/ hands the code to My Team; read the leagues once.
+async function yahooReturn() {
+  let ret = null, expect = null;
+  try { ret = JSON.parse(sessionStorage.getItem("tsm-yahoo-return") || "null"); expect = sessionStorage.getItem("tsm-yahoo-state"); sessionStorage.removeItem("tsm-yahoo-return"); } catch (e) { /* ignore */ }
+  if (!ret) return;
+  imp.tab = "yahoo";
+  if (ret.error || !ret.code) { imp.error = "Yahoo login was cancelled."; return render(); }
+  if (!expect || ret.state !== expect) { imp.error = "That Yahoo login expired. Try connecting again."; return render(); }
+  Object.assign(imp, { busy: true, error: "" }); render();
+  try {
+    const r = await within(fetch(YAHOO_FN, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: ret.code, redirect_uri: SITE + "yahoo/" }) }), 30000);
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || "Yahoo didn't respond. Try again in a minute.");
+    imp.yahoo.leagues = data.leagues || [];
+    const saved = {};
+    imp.yahoo.leagues.forEach(lg => {
+      const teams = lg.teams.map(t => ({ team_id: t.team_key, name: t.name, ids: yhMatch(t.players).ids }));
+      imp.leagueData.set(`yahoo:${lg.league_key}`, teams); saved[lg.league_key] = teams;
+    });
+    store.set("tsm-yahoo-leagues", saved);   // league-mates' rosters for the Trade Analyzer (Yahoo can't be re-read without a login)
+    if (!imp.yahoo.leagues.length) imp.error = "No Yahoo NFL leagues this season on that account.";
+  } catch (e) { imp.error = impError(e); }
+  imp.busy = false; render();
+}
+const YH_SLOT = { QB: "QB", RB: "RB", WR: "WR", TE: "TE", "W/R/T": "FLEX", "W/R": "WRRB", "W/T": "REC", "Q/W/R/T": "SFLEX" };
+function yahooInfo(lg) {
+  const slots = []; (lg.positions || []).forEach(p => { if (YH_SLOT[p.position]) for (let i = 0; i < p.count; i++) slots.push(YH_SLOT[p.position]); });
+  const mine = (lg.teams || []).find(t => t.mine) || {};
+  return { provider: "yahoo", league_id: lg.league_key, name: lg.name, size: lg.num_teams, fmt: formatFromSlots(slots), scoring: recToFmt(lg.rec), team_id: mine.team_key, ...yhMatch(mine.players) };
+}
+
+// ---- Paste: find player names in any copied roster
+function pasteFind(text) {
+  const t = " " + nameKey(String(text || "").replace(/[\r\n\t,;|•·()[\]]+/g, " ")) + " ";
+  const found = [];
+  D.players.slice().sort((a, b) => nameKey(b.name).length - nameKey(a.name).length).forEach(p => {
+    const k = nameKey(p.name);
+    if (k.length > 4 && t.includes(" " + k + " ") && !found.some(f => nameKey(f.name).includes(k))) found.push(p);
+  });
+  return found.sort((a, b) => POS.indexOf(a.pos) - POS.indexOf(b.pos) || b.ppg.ppr - a.ppg.ppr).slice(0, 40).map(p => p.id);
+}
+
+// ---- keeping linked teams in sync (Sleeper and ESPN; Yahoo needs a fresh login, so it's manual)
+async function fetchLinkedRoster(L) {
+  if (L.provider === "sleeper") return slMatch((await sleeperRoster(L.league_id, L.user_id, L.team_id)).players).ids;
+  if (L.provider === "espn") {
+    const info = espnInfo(await espnLeague(L.league_id));
+    const t = info.teams.find(x => String(x.id) === String(L.team_id));
+    if (!t) throw new Error("Your team is no longer in that ESPN league.");
+    imp.leagueData.set(`espn:${info.league_id}`, info.teams.map(x => ({ team_id: String(x.id), name: x.name, ids: esMatch(x.entries).ids })));
+    return esMatch(t.entries).ids;
+  }
+  return null;
+}
+async function leagueSync(force) {
+  const L = linkedLeague();
+  if (!L || L.provider === "yahoo") return;
+  const key = `${L.provider}:${L.league_id}`;
+  if (imp.syncing.has(key)) return;
+  const age = Date.now() - new Date(L.synced || 0).getTime();
+  if (!force && (imp.synced.has(key) || age < 15 * 60 * 1000)) return;
+  imp.syncing.add(key); if (force) render();
+  try {
+    const ids = await fetchLinkedRoster(L);
+    const now = new Date().toISOString(), before = roster().ids.slice().sort().join(), changed = before !== ids.slice().sort().join();
     if (L.team) {
-      Object.assign(L.team, { player_ids: ids, sleeper_synced_at: now });
-      await sb.from("teams").update({ player_ids: ids, sleeper_synced_at: now }).eq("id", L.team.id);
+      Object.assign(L.team, { player_ids: ids, provider_synced_at: now });
+      await sb.from("teams").update({ player_ids: ids, provider_synced_at: now, provider: L.provider, provider_league_id: L.league_id, provider_team_id: L.team_id }).eq("id", L.team.id);
     } else {
-      store.set("tsm-roster", ids); store.set("tsm-sleeper", { ...store.get("tsm-sleeper", {}), synced: Date.now() });
+      store.set("tsm-roster", ids); store.set("tsm-link", { ...L, synced: now }); store.set("tsm-sleeper", null);
     }
-    sl.synced.add(L.league_id);
-    if (force || before !== ids.slice().sort().join()) toast(before !== ids.slice().sort().join() ? "Roster updated from Sleeper" : "Already up to date with Sleeper");
-  } catch (e) { if (force) toast(slError(e), "bad"); }
-  sl.syncing.delete(L.league_id);
+    imp.synced.add(key);
+    if (force || changed) toast(changed ? `Roster updated from ${PROVIDERS[L.provider]}` : `Already up to date with ${PROVIDERS[L.provider]}`);
+  } catch (e) { if (force) toast(impError(e), "bad"); }
+  imp.syncing.delete(key);
   if (["my-team", "trade", "account"].includes(state.page)) render();
 }
-function sleeperAutoSync() { if (linkedLeague()) setTimeout(() => sleeperSync(false), 0); }
+function leagueAutoSync() { if (linkedLeague()) setTimeout(() => leagueSync(false), 0); }
 
-function sleeperBox(where) {
-  const L = linkedLeague();
-  const imported = id => (signedIn() && account.loaded ? account.teams.some(t => t.sleeper_league_id === id) : (store.get("tsm-sleeper", {}) || {}).league_id === id);
-  const list = sl.leagues && sl.leagues.length ? `<div class="sl-leagues">${sl.leagues.map(lg => `<div class="sl-league">
-      ${lg.avatar ? `<img src="https://sleepercdn.com/avatars/thumbs/${esc(lg.avatar)}" alt="" width="36" height="36" loading="lazy">` : `<span class="sl-av" aria-hidden="true">${esc((lg.name || "?").slice(0, 1))}</span>`}
-      <div class="meta"><b>${esc(String(lg.name || "").trim() || "League")}</b><small class="muted">${esc(leagueSummary(lg))}</small></div>
-      <button type="button" class="btn small ${imported(lg.league_id) ? "" : "primary"}" data-action="slImport" data-id="${esc(lg.league_id)}">${imported(lg.league_id) ? "Re-import" : "Import"}</button></div>`).join("")}
-    ${signedIn() && sl.leagues.length > 1 ? `<button type="button" class="btn small" data-action="slImportAll">Import all ${sl.leagues.length} leagues</button>` : ""}
-    ${!signedIn() && sb ? `<p class="muted sl-note">Importing replaces the roster saved in this browser. <a href="#signup">Create a free account</a> to keep every league as its own team and sync them automatically.</p>` : ""}</div>` : "";
-  const linked = L && where === "my-team" ? `<div class="sl-linked"><span class="badge sleeper">Sleeper</span>
-      <span>Synced with <b>${esc(L.name)}</b>${L.synced ? ` <span class="muted">· ${esc(timeAgo(new Date(L.synced).toISOString()))}</span>` : ""}</span>
-      <button type="button" class="btn small" data-action="slSync" ${sl.syncing.has(L.league_id) ? "disabled" : ""}>${sl.syncing.has(L.league_id) ? "Syncing…" : "Sync now"}</button>
-      <button type="button" class="link-btn" data-action="slUnlink">Unlink</button>
-      <small class="muted sl-hint">Roster moves in Sleeper show up here automatically. To edit by hand, unlink first.</small></div>` : "";
-  const open = where === "account" || !L || sl.leagues;
+// ---- UI
+function leagueRow(L, action, id, extra = "") {
+  const done = isImported(L.provider, L.league_id);
+  return `<div class="sl-league"><span class="sl-av" aria-hidden="true">${esc(String(L.name || "?").trim().slice(0, 1).toUpperCase())}</span>
+    <div class="meta"><b>${esc(String(L.name || "League").trim())}</b><small class="muted">${esc(extra || describeLeague(L))}</small></div>
+    <button type="button" class="btn small ${done ? "" : "primary"}" data-action="${action}" data-id="${esc(id)}">${done ? "Re-import" : "Import"}</button></div>`;
+}
+function importTab() {
+  const t = imp.tab;
+  if (t === "sleeper") {
+    const lg = imp.sleeper.leagues;
+    return `<form id="impSleeper" class="sl-form" novalidate>
+        <div class="field"><label for="slUser">Sleeper username</label><input id="slUser" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="40" placeholder="e.g. fantasyking22" value="${esc(imp.sleeper.user ? imp.sleeper.user.username || "" : slUsername())}"></div>
+        <button type="submit" class="btn primary" ${imp.busy ? "disabled" : ""}>${imp.busy ? "Looking…" : "Find my leagues"}</button></form>
+      <p class="muted sl-note">No password needed. We only read your public leagues and rosters.</p>
+      ${impMsg()}
+      ${lg && lg.length ? `<div class="sl-leagues">${lg.map(x => leagueRow(sleeperLeagueInfo(x), "impSleeper", x.league_id)).join("")}
+        ${signedIn() && lg.length > 1 ? `<button type="button" class="btn small" data-action="impSleeperAll">Import all ${lg.length} leagues</button>` : ""}</div>` : ""}`;
+  }
+  if (t === "espn") {
+    const L = imp.espn.league;
+    return `<form id="impEspn" class="sl-form" novalidate>
+        <div class="field"><label for="esLeague">ESPN league link or ID</label><input id="esLeague" type="text" autocomplete="off" spellcheck="false" maxlength="300" placeholder="https://fantasy.espn.com/football/team?leagueId=…" value="${esc(store.get("tsm-espn-league", ""))}"></div>
+        <button type="submit" class="btn primary" ${imp.busy ? "disabled" : ""}>${imp.busy ? "Looking…" : "Find my league"}</button></form>
+      <p class="muted sl-note">Open your team on the ESPN site and copy the address bar. Works for public leagues, and for private ones when you're logged in to ESPN in this browser.</p>
+      ${impMsg()}
+      ${L ? `<p class="sl-pick"><b>${esc(L.name)}</b> <span class="muted">· ${esc(describeLeague(L))}</span><br><span class="muted">Which team is yours?</span></p>
+        <div class="sl-leagues">${L.teams.slice().sort((a, b) => (String(b.id) === imp.espn.hint) - (String(a.id) === imp.espn.hint)).map(x =>
+          `<div class="sl-league${String(x.id) === imp.espn.hint ? " hint" : ""}"><span class="sl-av" aria-hidden="true">${esc(x.name.slice(0, 1).toUpperCase())}</span>
+            <div class="meta"><b>${esc(x.name)}</b><small class="muted">${esc(x.owner || "")}${String(x.id) === imp.espn.hint ? " · from your link" : ""}</small></div>
+            <button type="button" class="btn small ${String(x.id) === imp.espn.hint ? "primary" : ""}" data-action="impEspn" data-id="${x.id}">This is me</button></div>`).join("")}</div>` : ""}`;
+  }
+  if (t === "yahoo") {
+    const c = imp.yahoo.config;
+    if (c === undefined || c === null) { yahooConfig(); return `<p class="muted">Checking Yahoo…</p>`; }
+    if (!c.configured) return `<p class="muted sl-note" style="margin:0">One-click Yahoo import is coming soon. For now, open your team on Yahoo, select and copy the roster, and use <button type="button" class="link-btn" data-action="impTab" data-tab="paste">Paste</button>.</p>`;
+    const lg = imp.yahoo.leagues;
+    return `<p class="sl-note" style="margin:0 0 10px">You'll log in on Yahoo's site and approve read-only access. We never see your Yahoo password, and nothing is posted or changed.</p>
+      <button type="button" class="btn primary" data-action="yahooConnect" ${imp.busy ? "disabled" : ""}>${imp.busy ? "Reading your leagues…" : lg ? "Reconnect Yahoo" : "Connect Yahoo"}</button>
+      ${impMsg()}
+      ${lg && lg.length ? `<div class="sl-leagues">${lg.map(x => leagueRow(yahooInfo(x), "impYahoo", x.league_key)).join("")}
+        ${signedIn() && lg.length > 1 ? `<button type="button" class="btn small" data-action="impYahooAll">Import all ${lg.length} leagues</button>` : ""}</div>` : ""}`;
+  }
+  const found = imp.paste.ids;
+  return `<form id="impPaste" class="sl-form sl-paste" novalidate>
+      <div class="field"><label for="pasteText">Paste your roster</label><textarea id="pasteText" rows="5" placeholder="Copy your roster page on Yahoo, NFL.com, CBS or anywhere else, and paste it here. Extra text is fine."></textarea></div>
+      <button type="submit" class="btn primary">Find players</button></form>
+    ${impMsg()}
+    ${found ? found.length ? `<div class="sl-found"><p class="muted" style="margin:0">Found ${found.length} player${found.length === 1 ? "" : "s"}. Tap one to remove it.</p>
+        <div class="roster-chips">${found.map(id => byId.get(id)).filter(Boolean).map(p => `<button type="button" class="chip" data-action="pasteDrop" data-id="${esc(p.id)}">${esc(p.name)} <small>${p.pos}</small> ×</button>`).join("")}</div>
+        <div class="sl-paste-actions"><button type="button" class="btn primary" data-action="pasteUse">${signedIn() && activeTeam() ? "Replace current team" : "Use these players"}</button>
+        ${signedIn() ? `<button type="button" class="btn" data-action="pasteNew">Save as a new team</button>` : ""}</div></div>`
+      : `<p class="auth-msg bad">We didn't recognize any player names in that text. Copy the roster part of the page, with full names.</p>` : ""}`;
+}
+function impMsg() { return imp.error ? `<p class="auth-msg bad" role="alert">${esc(imp.error)}</p>` : ""; }
+function importBox(where) {
+  const L = linkedLeague(), key = L && `${L.provider}:${L.league_id}`;
+  const linked = L && where === "my-team" ? `<div class="sl-linked"><span class="badge prov ${L.provider}">${PROVIDERS[L.provider]}</span>
+      <span>${L.provider === "yahoo" ? "Imported from" : "Synced with"} <b>${esc(L.name)}</b>${L.synced ? ` <span class="muted">· ${esc(timeAgo(new Date(L.synced).toISOString()))}</span>` : ""}</span>
+      ${L.provider === "yahoo" ? `<button type="button" class="btn small" data-action="yahooConnect">Update from Yahoo</button>`
+        : `<button type="button" class="btn small" data-action="leagueSync" ${imp.syncing.has(key) ? "disabled" : ""}>${imp.syncing.has(key) ? "Syncing…" : "Sync now"}</button>`}
+      <button type="button" class="link-btn" data-action="leagueUnlink">Unlink</button>
+      <small class="muted sl-hint">${L.provider === "yahoo" ? "Made roster moves on Yahoo? Tap Update to bring them in." : `Roster moves in ${PROVIDERS[L.provider]} show up here automatically.`} To edit by hand, unlink first.</small></div>` : "";
+  const open = where === "account" || !L || imp.open || imp.error || imp.busy || imp.sleeper.leagues || imp.espn.league || imp.yahoo.leagues || imp.paste.ids;
+  const tabs = [["sleeper", "Sleeper"], ["espn", "ESPN"], ["yahoo", "Yahoo"], ["paste", "Paste"]];
   return `<div class="panel panel-pad sl-box">
     ${linked}
-    <details class="sl-details"${open ? " open" : ""}><summary><span class="sl-logo" aria-hidden="true">S</span> ${L && where === "my-team" ? "Import another Sleeper league" : "Import your team from Sleeper"}</summary>
-      <form id="slForm" class="sl-form" novalidate>
-        <div class="field"><label for="slUser">Sleeper username</label><input id="slUser" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="40" placeholder="e.g. fantasyking22" value="${esc(sl.user ? sl.user.username || "" : slUsername())}"></div>
-        <button type="submit" class="btn primary" ${sl.busy ? "disabled" : ""}>${sl.busy ? "Looking…" : "Find my leagues"}</button>
-      </form>
-      <p class="muted sl-note">No password needed. We only read your public leagues and rosters.</p>
-      ${sl.error ? `<p class="auth-msg bad" role="alert">${esc(sl.error)}</p>` : ""}
-      ${list}
+    <details class="sl-details"${open ? " open" : ""}><summary><span class="sl-logo" aria-hidden="true">⇣</span> ${L && where === "my-team" ? "Import another league" : "Import your team"}</summary>
+      <div class="seg seg-wrap imp-tabs" role="tablist" aria-label="Where your league is">${tabs.map(([k, v]) => `<button type="button" role="tab" aria-selected="${imp.tab === k}" data-action="impTab" data-tab="${k}">${v}</button>`).join("")}</div>
+      <div class="imp-body">${importTab()}</div>
+      ${!signedIn() && sb && imp.tab !== "paste" ? `<p class="muted sl-note">Importing replaces the roster saved in this browser. <a href="#signup">Create a free account</a> to keep every league as its own team and sync them automatically.</p>` : ""}
     </details></div>`;
 }
-function onSleeperSubmit(e) {
-  if (e.target.id !== "slForm") return;
-  sleeperFind($("#slUser").value);
+document.addEventListener("toggle", e => { if (e.target.classList && e.target.classList.contains("sl-details")) imp.open = e.target.open; }, true);
+function onImportSubmit(e) {
+  const id = e.target.id;
+  if (id === "impSleeper") sleeperFind($("#slUser").value);
+  else if (id === "impEspn") espnFind($("#esLeague").value);
+  else if (id === "impPaste") { imp.error = ""; imp.paste.ids = pasteFind($("#pasteText").value); render(); }
 }
+function providerBadge(t) { const l = teamLink(t); return l ? ` · <span class="badge prov ${l.provider}">${PROVIDERS[l.provider]}</span>` : ""; }
 
-// Trade Analyzer: players on a league-mate's roster.
-async function leagueData(leagueId) {
-  if (sl.leagueData.has(leagueId)) return sl.leagueData.get(leagueId);
-  sl.leagueData.set(leagueId, null);   // loading
+// ---- Trade Analyzer: a league-mate's roster
+async function loadLeagueData(L) {
+  const key = `${L.provider}:${L.league_id}`;
+  if (imp.leagueData.has(key)) return;
+  imp.leagueData.set(key, null);
   try {
-    const [rosters, users] = await Promise.all([slGet(`/league/${leagueId}/rosters`), slGet(`/league/${leagueId}/users`)]);
-    const names = new Map((users || []).map(u => [u.user_id, String((u.metadata && u.metadata.team_name) || u.display_name || "").trim() || "Team"]));
-    sl.leagueData.set(leagueId, (rosters || []).map(r => ({ roster_id: r.roster_id, name: names.get(r.owner_id) || `Team ${r.roster_id}`, ids: mapSleeper(r.players).ids })));
-  } catch (e) { sl.leagueData.set(leagueId, []); }
+    if (L.provider === "sleeper") {
+      const [rosters, users] = await Promise.all([getJSON(`${SLEEPER}/league/${L.league_id}/rosters`), getJSON(`${SLEEPER}/league/${L.league_id}/users`)]);
+      const names = new Map((users || []).map(u => [u.user_id, String((u.metadata && u.metadata.team_name) || u.display_name || "").trim() || "Team"]));
+      imp.leagueData.set(key, (rosters || []).map(r => ({ team_id: String(r.roster_id), name: names.get(r.owner_id) || `Team ${r.roster_id}`, ids: slMatch(r.players).ids })));
+    } else if (L.provider === "espn") await fetchLinkedRoster(L);
+    else imp.leagueData.set(key, []);
+  } catch (e) { imp.leagueData.set(key, []); }
   if (state.page === "trade") render();
-  return sl.leagueData.get(leagueId);
 }
 function partnerChips(t) {
   const L = linkedLeague();
   if (!L) return "";
-  const data = sl.leagueData.get(L.league_id);
-  if (data === undefined) { leagueData(L.league_id); return `<p class="muted roster-chips">Loading your Sleeper league…</p>`; }
+  const key = `${L.provider}:${L.league_id}`, data = imp.leagueData.get(key);
+  if (data === undefined) {
+    if (L.provider === "yahoo") {
+      const saved = (store.get("tsm-yahoo-leagues", {}) || {})[L.league_id];
+      if (!saved) return "";
+      imp.leagueData.set(key, saved); return partnerChips(t);
+    }
+    loadLeagueData(L); return `<p class="muted roster-chips">Loading your league…</p>`;
+  }
   if (!data || !data.length) return "";
-  const others = data.filter(r => r.roster_id !== L.roster_id && r.ids.length);
-  const pick = others.find(r => String(r.roster_id) === String(store.get("tsm-trade-partner", ""))) || null;
+  const others = data.filter(r => String(r.team_id) !== String(L.team_id) && r.ids.length);
+  const pick = others.find(r => String(r.team_id) === String(store.get("tsm-trade-partner", ""))) || null;
   return `<div class="field sl-partner"><label for="tradePartner">Trade partner in ${esc(L.name)}</label>
-      <select id="tradePartner"><option value="">Pick a team…</option>${others.map(r => `<option value="${r.roster_id}"${pick && pick.roster_id === r.roster_id ? " selected" : ""}>${esc(r.name)}</option>`).join("")}</select></div>
+      <select id="tradePartner"><option value="">Pick a team…</option>${others.map(r => `<option value="${esc(r.team_id)}"${pick && pick.team_id === r.team_id ? " selected" : ""}>${esc(r.name)}</option>`).join("")}</select></div>
     ${pick ? `<div class="roster-chips"><span class="muted">From ${esc(pick.name)}:</span>${pick.ids.map(id => byId.get(id)).filter(p => p && !t.get.includes(p.id))
       .sort((a, b) => b.ppg.ppr - a.ppg.ppr).slice(0, 18).map(p => `<button type="button" class="chip" data-action="tadd" data-side="get" data-id="${esc(p.id)}">${esc(lastName(p.name))} <small>${p.pos}</small></button>`).join("")}</div>` : ""}`;
 }
 
+async function runImport(el, build) {
+  el.disabled = true; el.textContent = "Importing…";
+  try { await finishImport(await build()); } catch (e) { toast(impError(e), "bad"); render(); }
+}
+async function importAll(el, infos) {
+  el.disabled = true; el.textContent = "Importing…";
+  let n = 0;
+  for (const get of infos) { try { const L = await get(); await saveImported(L, { keepActive: n > 0 }); if (!n) await applyLeagueSettings(L); n++; } catch (e) { toast(impError(e), "bad"); } }
+  toast(`Imported ${n} league${n === 1 ? "" : "s"}. Switch between them on My Team.`);
+  imp.sleeper.leagues = null; imp.yahoo.leagues = null; imp.open = false; navigate("my-team"); render();
+}
 Object.assign(ACTIONS, {
-  slImport: async el => {
-    const lg = (sl.leagues || []).find(x => x.league_id === el.dataset.id); if (!lg) return;
-    el.disabled = true; el.textContent = "Importing…";
-    try {
-      const res = await sleeperImport(lg);
-      await applyLeagueSettings(lg);
-      toast(`Imported ${res.ids.length} players from “${res.name}”${res.missed ? ` (${res.missed} kickers, defenses or deep reserves skipped)` : ""}. Scoring set to ${D.formats[leagueScoring(lg)]}.`);
-      sl.leagues = null; navigate("my-team"); render();
-    } catch (e) { toast(slError(e), "bad"); render(); }
+  impTab: el => { imp.open = true; imp.tab = el.dataset.tab; imp.error = ""; store.set("tsm-imp-tab", imp.tab); render(); },
+  impSleeper: el => { const lg = (imp.sleeper.leagues || []).find(x => x.league_id === el.dataset.id); if (lg) runImport(el, () => sleeperImport(lg)); },
+  impSleeperAll: el => importAll(el, (imp.sleeper.leagues || []).map(lg => () => sleeperImport(lg))),
+  impEspn: el => {
+    const L = imp.espn.league; const t = L && L.teams.find(x => String(x.id) === el.dataset.id); if (!t) return;
+    runImport(el, async () => ({ ...L, team_id: t.id, ...esMatch(t.entries) }));
   },
-  slImportAll: async el => {
-    el.disabled = true; el.textContent = "Importing…";
-    let n = 0;
-    for (const lg of sl.leagues || []) { try { await sleeperImport(lg, { keepActive: n > 0 }); n++; } catch (e) { toast(`${lg.name}: ${slError(e)}`, "bad"); } }
-    if (sl.leagues && sl.leagues[0]) await applyLeagueSettings(sl.leagues[0]);
-    toast(`Imported ${n} league${n === 1 ? "" : "s"} from Sleeper. Switch between them on My Team.`);
-    sl.leagues = null; navigate("my-team"); render();
+  impYahoo: el => { const lg = (imp.yahoo.leagues || []).find(x => x.league_key === el.dataset.id); if (lg) runImport(el, async () => yahooInfo(lg)); },
+  impYahooAll: el => importAll(el, (imp.yahoo.leagues || []).map(lg => async () => yahooInfo(lg))),
+  yahooConnect: async () => { await yahooConfig(); yahooConnect(); },
+  pasteDrop: el => { imp.paste.ids = (imp.paste.ids || []).filter(id => id !== el.dataset.id); render(); },
+  pasteUse: async () => {
+    const ids = imp.paste.ids || []; if (!ids.length) return;
+    const L = linkedLeague();
+    if (L && L.team) await ACTIONS.leagueUnlink(true); else if (!signedIn()) store.set("tsm-link", null);
+    await setRosterIds(ids); imp.paste.ids = null; toast(`Added ${ids.length} players`); navigate("my-team"); render();
   },
-  slSync: () => sleeperSync(true),
-  slUnlink: async () => {
+  pasteNew: () => inlinePrompt("Name this team", `Team ${account.teams.length + 1}`, async name => {
+    await createTeam(name, imp.paste.ids || []); imp.paste.ids = null; navigate("my-team"); render();
+  }),
+  leagueSync: () => leagueSync(true),
+  leagueUnlink: async quiet => {
     const L = linkedLeague(); if (!L) return;
     if (L.team) {
-      const { error } = await sb.from("teams").update({ sleeper_league_id: null, sleeper_roster_id: null }).eq("id", L.team.id);
+      const patch = { provider: null, provider_league_id: null, provider_team_id: null, sleeper_league_id: null, sleeper_roster_id: null };
+      const { error } = await sb.from("teams").update(patch).eq("id", L.team.id);
       if (error) return toast(friendlyError(error), "bad");
-      Object.assign(L.team, { sleeper_league_id: null, sleeper_roster_id: null });
-    } else store.set("tsm-sleeper", null);
-    toast("Unlinked from Sleeper. The roster stays, and you can edit it by hand."); render();
+      Object.assign(L.team, patch);
+    } else { store.set("tsm-link", null); store.set("tsm-sleeper", null); }
+    if (quiet !== true) { toast(`Unlinked from ${PROVIDERS[L.provider]}. The roster stays, and you can edit it by hand.`); render(); }
   },
 });
 
@@ -2212,7 +2465,7 @@ function renderAccount() {
   if (!account.loaded) { $("#page").innerHTML = `<p class="loading">Loading your account…</p>`; return; }
   const pr = account.profile, ls = leagueSettings();
   const teamRows = account.teams.map(t => `<div class="list-row">
-      <div><b>${esc(t.name)}</b>${t.id === account.activeTeamId ? ` <span class="badge ok">Active</span>` : ""}<small class="muted" style="display:block">${t.player_ids.length} players · ${esc(slotSet(t.lineup_format).label)}${t.sleeper_league_id ? ` · <span class="badge sleeper">Sleeper</span>` : ""}</small></div>
+      <div><b>${esc(t.name)}</b>${t.id === account.activeTeamId ? ` <span class="badge ok">Active</span>` : ""}<small class="muted" style="display:block">${t.player_ids.length} players · ${esc(slotSet(t.lineup_format).label)}${providerBadge(t)}</small></div>
       <div class="row-actions"><button type="button" class="btn small" data-action="acctOpenTeam" data-id="${t.id}">Open</button>
         <button type="button" class="btn small" data-action="teamDelete" data-id="${t.id}">Delete</button></div></div>`).join("");
   const tradeRows = account.trades.map(t => `<div class="list-row">
@@ -2238,7 +2491,7 @@ function renderAccount() {
           <button type="submit" class="btn primary">Save settings</button>
         </form>
         <div class="section-head"><h2>Connected accounts</h2></div>
-        ${sleeperBox("account")}
+        ${importBox("account")}
         <div class="section-head"><h2>Account</h2></div>
         <div class="panel panel-pad acct-actions">
           ${account.isAdmin ? `<a class="btn primary" href="#write">Write a blog post</a>` : ""}

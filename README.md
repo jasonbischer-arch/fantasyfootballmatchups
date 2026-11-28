@@ -38,19 +38,26 @@ static GitHub Pages site; the browser talks to Supabase directly.
 - Set **Authentication → URL Configuration → Site URL** to the site's address so email links come back to it.
 - `template/assets/vendor/supabase-2.119.0.js` is the Supabase browser client (MIT), hosted with the site.
 
-## Sleeper import
+## League imports (Sleeper, ESPN, Yahoo, paste)
 
-- **My Team** and **Your Account** have "Import your team from Sleeper": enter a Sleeper username (no password), pick a
-  league, and the roster, lineup slots (including superflex and RB/WR or WR/TE flex), scoring and league size come over.
-- Signed in, each league becomes its own saved team (re-importing updates it). Linked teams re-sync from Sleeper when
-  opened (at most every 15 minutes) or with **Sync now**; **Unlink** keeps the roster and allows hand edits.
-  Logged out, the import fills this browser's roster.
+**My Team** and **Your Account** have an "Import your team" box with four tabs:
+
+| Tab | How it works | Stays in sync |
+|---|---|---|
+| **Sleeper** | Sleeper username (no password) → pick a league. Browser calls Sleeper's public API. | Automatically (when opened, at most every 15 min) + **Sync now** |
+| **ESPN** | League link or ID → pick your team. Browser calls ESPN's API. Public leagues always work; private ones work when the visitor is logged in to ESPN in that browser and third-party cookies are allowed. | Automatically + **Sync now** |
+| **Yahoo** | **Connect Yahoo** → log in on Yahoo → pick leagues. Needs the Yahoo app from `docs/yahoo-setup.md`; the `yahoo` Supabase function swaps the login code for the leagues and stores nothing. | **Update from Yahoo** (logs in again) |
+| **Paste** | Copy a roster from any site; player names are recognized in the browser. | No |
+
+- Imports bring the roster, the league's exact lineup slots (superflex, RB/WR and WR/TE flex too), scoring and league size.
+- Signed in, each league is its own saved team (re-importing updates it). Logged out, the import fills this browser's roster.
 - **Trade Analyzer:** with a linked team, pick a trade partner from the league and add their players with one tap.
-- The browser calls Sleeper's public read-only API directly (`api.sleeper.app`). `build.py` matches every player to his
-  Sleeper ID (`sl` in `data.json`) using Sleeper's player list, downloaded at most once a day as Sleeper asks.
-  Kickers, defenses and deep reserves we don't track are skipped and counted in the import message.
-- Database: `teams.sleeper_league_id`, `sleeper_roster_id`, `sleeper_synced_at`; `profiles.sleeper_username`,
-  `sleeper_user_id`. Lineup formats copied from a league are stored as `c:QB,RB,…`.
+- **Unlink** keeps the roster and allows hand edits.
+- Player matching: `build.py` adds each player's Sleeper ID (`sl`, from Sleeper's player list, downloaded at most daily)
+  and ESPN ID (`es`, from nflverse). Yahoo and pasted names are matched by name, position and team.
+- Database: `teams.provider`, `provider_league_id`, `provider_team_id`, `provider_synced_at` (the older `sleeper_*`
+  columns are kept for the first Sleeper imports); `profiles.sleeper_username`, `sleeper_user_id`. League lineups are
+  stored as `c:QB,RB,…`.
 
 ## Data
 

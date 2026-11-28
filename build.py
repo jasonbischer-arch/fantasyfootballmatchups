@@ -480,6 +480,23 @@ def assign_sleeper_ids(data: dict) -> None:
     print(f"  Sleeper IDs: {got} of {len(data['players'])} players matched", file=sys.stderr)
 
 
+def assign_espn_ids(data: dict) -> None:
+    """ESPN player IDs ("es") from nflverse's player file, for ESPN league imports."""
+    import csv
+    try:
+        rows = csv.DictReader(open(fetch(URL_PLAYERS, "players.csv", max_age_hours=72), newline="", encoding="utf-8"))
+        es = {r["gsis_id"]: r["espn_id"].split(".")[0] for r in rows if r.get("espn_id") not in (None, "", "NA")}
+    except Exception as e:
+        print(f"  ESPN IDs unavailable: {e}", file=sys.stderr)
+        return
+    got = 0
+    for p in data["players"]:
+        if es.get(p["id"]):
+            p["es"] = es[p["id"]]
+            got += 1
+    print(f"  ESPN IDs: {got} of {len(data['players'])} players", file=sys.stderr)
+
+
 def render_markdown(md_text: str) -> str:
     """Article HTML for the pre-built pages. Raw HTML in posts is escaped (posts are Markdown only)."""
     import markdown as _md
@@ -1410,7 +1427,7 @@ def write_site(data: dict, preview: Path | None) -> None:
                   {"src": "/assets/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}],
     }, indent=1))
     today = dt.date.today().isoformat()
-    (OUT / "robots.txt").write_text(f"User-agent: *\nAllow: /\nDisallow: /account/\n\nSitemap: {SITE_URL}sitemap.xml\n")
+    (OUT / "robots.txt").write_text(f"User-agent: *\nAllow: /\nDisallow: /account/\nDisallow: /yahoo/\n\nSitemap: {SITE_URL}sitemap.xml\n")
     prio = {"home": "1.0", "trade": "0.9", "qb": "0.9", "rb": "0.9", "wr": "0.9", "te": "0.9", "start-sit": "0.9", "my-team": "0.8",
             "players": "0.8", "schedule": "0.8", "teams": "0.7"}
     prio.update({"blog": "0.9"})
@@ -1422,6 +1439,14 @@ def write_site(data: dict, preview: Path | None) -> None:
                    for r in routes if r[5])
     (OUT / "sitemap.xml").write_text('<?xml version="1.0" encoding="UTF-8"?>\n'
                                      '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' + urls + "</urlset>\n")
+    # Yahoo login sends people back here with ?code=…; hand it to the app on My Team (no Supabase on this page).
+    (OUT / "yahoo").mkdir(exist_ok=True)
+    (OUT / "yahoo" / "index.html").write_text(
+        '<!doctype html>\n<html lang="en"><meta charset="utf-8"><meta name="robots" content="noindex"><title>Connecting Yahoo…</title>'
+        '<meta name="viewport" content="width=device-width, initial-scale=1"><p style="font-family:sans-serif;padding:24px">Connecting your Yahoo leagues…</p>'
+        '<script>(function(){var q=new URLSearchParams(location.search);try{sessionStorage.setItem("tsm-yahoo-return",JSON.stringify('
+        '{code:q.get("code")||"",state:q.get("state")||"",error:q.get("error")||""}));}catch(e){}'
+        'location.replace("/my-team/");})();</script></html>\n')
     # Real 404 page (GitHub Pages serves it with a 404 status) with links back into the site.
     (OUT / "news").mkdir(exist_ok=True)
     (OUT / "news" / "index.html").write_text(
@@ -1520,6 +1545,7 @@ def main() -> None:
     data = build(args.season or pick_season(), args.week)
     assign_slugs(data)
     assign_sleeper_ids(data)
+    assign_espn_ids(data)
     data["posts"] = load_posts()
     write_site(data, args.preview)
 

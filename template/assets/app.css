@@ -707,7 +707,9 @@ table.h2h tbody th { font: 600 13px/1.2 var(--body); color: var(--muted); backgr
 @media (max-width: 560px) { .sp-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } .sp-photo { width: 72px; height: 72px; } }
 
 /* Sleeper import */
-.badge.sleeper { background: #1b2a3d; color: #7ff0d4; }
+.badge.prov { background: #1b2a3d; color: #7ff0d4; }
+.badge.prov.espn { background: #c8102e; color: #fff; }
+.badge.prov.yahoo { background: #6001d2; color: #fff; }
 .sl-box { display: grid; gap: 12px; }
 .sl-linked { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
 .sl-linked .sl-hint { flex-basis: 100%; }
@@ -728,3 +730,15 @@ table.h2h tbody th { font: 600 13px/1.2 var(--body); color: var(--muted); backgr
 .sl-league .meta b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sl-partner { margin-top: 4px; }
 .sl-partner select { max-width: 100%; }
+
+.imp-tabs { margin-bottom: 14px; }
+.imp-tabs button[aria-selected="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgb(0 0 0 / .15); }
+.imp-body { display: grid; gap: 4px; }
+.sl-pick { margin: 12px 0 0; }
+.sl-league.hint { border-color: var(--s-green); box-shadow: 0 0 0 1px var(--s-green) inset; }
+.sl-paste { align-items: stretch; flex-direction: column; }
+.sl-paste .field { flex: none; }
+.sl-paste textarea { font: 500 15px/1.4 var(--body); padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); width: 100%; resize: vertical; }
+.sl-paste .btn { align-self: flex-start; }
+.sl-found { display: grid; gap: 10px; margin-top: 12px; }
+.sl-paste-actions { display: flex; gap: 8px; flex-wrap: wrap; }
